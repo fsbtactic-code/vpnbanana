@@ -34,6 +34,8 @@ sudo bash install.sh
 | `check-domains.sh` | Scan domains for TLS1.3 + H2 from the server |
 | `REALITY-DEST.md` | Parsed scan + inbound hints |
 | `SERVER-FIXES.md` | Watchdog / xray.service / fail2ban |
+| `REALITY-FAILOVER.md` | Cron: авто-смена SNI/dest при падении |
+| `scripts/reality-failover.sh` | Скрипт проверки + выбор быстрейшего хоста |
 | `../reality-checker/` | Windows PowerShell checker (optional) |
 
 ## Ports
