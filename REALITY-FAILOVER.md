@@ -31,10 +31,50 @@ sudo chmod +x /usr/local/bin/reality-failover.sh
 sudo /usr/local/bin/reality-failover.sh
 ```
 
-## Cron раз в 10 минут
+## Постоянный «слушатель» (systemd) — рекомендуется
+
+Сервис крутит тот же скрипт в режиме `watch`: раз в **60 секунд** (или `WATCH_INTERVAL_SEC`) проверяет хост; если мёртв — переключает.
 
 ```bash
-echo '*/10 * * * * root /usr/local/bin/reality-failover.sh >> /var/log/reality-failover.log 2>&1' | sudo tee /etc/cron.d/reality-failover
+sudo curl -fsSL https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/scripts/reality-watcher.service \
+  -o /etc/systemd/system/reality-watcher.service
+
+# Убедись, что скрипт уже в /usr/local/bin/reality-failover.sh (см. выше)
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now reality-watcher
+sudo systemctl status reality-watcher --no-pager
+```
+
+Интервал, например 120 секунд:
+
+```bash
+sudo systemctl edit reality-watcher
+# В открывшемся override.conf:
+# [Service]
+# Environment=WATCH_INTERVAL_SEC=120
+sudo systemctl daemon-reload
+sudo systemctl restart reality-watcher
+```
+
+Логи:
+
+```bash
+journalctl -u reality-watcher -f
+```
+
+**Не запускай одновременно** долгий cron с тем же скриптом без нужды (flock не даст двум менять БД сразу, но лишняя нагрузка). Либо cron, либо watcher.
+
+Ручной один прогон:
+
+```bash
+sudo /usr/local/bin/reality-failover.sh once
+```
+
+## Cron раз в 10 минут (альтернатива watcher)
+
+```bash
+echo '*/10 * * * * root /usr/local/bin/reality-failover.sh once >> /var/log/reality-failover.log 2>&1' | sudo tee /etc/cron.d/reality-failover
 sudo chmod 644 /etc/cron.d/reality-failover
 ```
 
@@ -57,5 +97,6 @@ sqlite3 /etc/x-ui/x-ui.db "PRAGMA table_info(inbounds);"
 ## Отключить
 
 ```bash
+sudo systemctl disable --now reality-watcher 2>/dev/null || true
 sudo rm -f /etc/cron.d/reality-failover
 ```

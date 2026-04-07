@@ -1,0 +1,15 @@
+[Unit]
+Description=REALITY SNI watcher (3x-ui failover when dest host is down)
+After=network-online.target x-ui.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Проверка раз в 60 с; изменить: Environment=WATCH_INTERVAL_SEC=120
+Environment=WATCH_INTERVAL_SEC=60
+ExecStart=/usr/local/bin/reality-failover.sh watch
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
