@@ -36,6 +36,7 @@ sudo bash install.sh
 | `SERVER-FIXES.md` | Watchdog / xray.service / fail2ban |
 | `REALITY-FAILOVER.md` | Cron: авто-смена SNI/dest при падении |
 | `scripts/reality-failover.sh` | Скрипт проверки + выбор быстрейшего хоста |
+| `DECRYPTION-ROLLOUT.md` | Массовый rollout `decryption` + Telegram рассылка |
 | `../reality-checker/` | Windows PowerShell checker (optional) |
 
 ## Ports
