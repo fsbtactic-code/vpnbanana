@@ -9,7 +9,7 @@
 #
 # Логика каждого прогона:
 #   - Замер «задержки» до каждого хоста из пула CANDIDATES (TLS 1.3 + curl), по умолчанию параллельно (PROBE_PARALLEL, по умолчанию умеренный)
-#   - Перепроверка топ-K кандидатов последовательно (VERIFY_TOP_N × VERIFY_SAMPLES, медиана) — меньше ложных лидеров при перегрузе сети
+#   - Вторая волна: кандидаты в «полосе» от лидера 1-й волны (±VERIFY_MARGIN_SEC) + добор до VERIFY_TOP_N; по каждому — медиана VERIFY_SAMPLES; победитель = min(медиан)
 #   - REALITY: по умолчанию ssl_verify_result=0 (сертификат под SNI), иначе хост отбрасывается
 #   - Выбор хоста с минимальным временем среди прошедших проверки
 #   - Если лидер ≠ текущий SNI, но выигрыш < SWITCH_MIN_IMPROVE_MS (по умолчанию 50 мс) — SKIP, SNI не меняем
@@ -42,8 +42,10 @@
 #      SUB_UPDATES_HOURS (после смены SNI: интервал в заголовке Profile-Update-Interval, часы),
 #      BUMP_SUB_ANNOUNCE (1/0 — обновить Announce в БД 3x-ui, чтобы клиенты заметили смену подписки)
 #      PROBE_PARALLEL (одновременных curl; по умолчанию 12; 1 = строго по одному)
-#      VERIFY_TOP_N (после 1-й волны: перепроверить топ N хостов; 0 = отключить; по умолчанию 8)
-#      VERIFY_SAMPLES (для каждого из топ-N: столько последовательных замеров; медиана; по умолчанию 3)
+#      VERIFY_TOP_N (минимум кандидатов из верхушки 1-й волны; 0 = отключить verify; по умолчанию 8)
+#      VERIFY_MARGIN_SEC (сек): взять всех из 1-й волны с временем ≤ fastest_round1 + margin (ловим «реально быстрых» при шуме parallel)
+#      VERIFY_MAX_CANDIDATES (верхний предел размера полосы; по умолчанию 32)
+#      VERIFY_SAMPLES (для каждого кандидата: последовательных замеров; медиана; по умолчанию 3)
 #      VERIFY_PAUSE_SEC (пауза между замерами verify, по умолчанию 0.15)
 #      REALITY_SSL_VERIFY=1 — отбрасывать хосты с ssl_verify_result != 0 (не REALITY-пригодный TLS к SNI)
 #      POOL_PROBE_FULL=1 — в лог весь pool probe (host=time); иначе краткая сводка + sample
@@ -73,8 +75,12 @@ TIMEOUT_TOTAL="${TIMEOUT_TOTAL:-6}"
 WATCH_INTERVAL_SEC="${WATCH_INTERVAL_SEC:-1800}"
 # Параллельные HTTPS-пробы к хостам пула (xargs — меньше параллелизма = меньше таймаутов/искажений)
 PROBE_PARALLEL="${PROBE_PARALLEL:-12}"
-# Вторая волна: топ-N из первой сортировки — последовательно, несколько замеров, медиана
+# Вторая волна: полоса от лидера 1-й волны + добор до top-N → медиана по каждому → минимум медиан = «самый быстрый»
 VERIFY_TOP_N="${VERIFY_TOP_N:-8}"
+VERIFY_MARGIN_SEC="${VERIFY_MARGIN_SEC:-0.15}"
+VERIFY_MAX_CANDIDATES="${VERIFY_MAX_CANDIDATES:-32}"
+[[ "$VERIFY_MAX_CANDIDATES" =~ ^[0-9]+$ ]] || VERIFY_MAX_CANDIDATES=32
+(( VERIFY_MAX_CANDIDATES < 1 )) && VERIFY_MAX_CANDIDATES=32
 VERIFY_SAMPLES="${VERIFY_SAMPLES:-3}"
 VERIFY_PAUSE_SEC="${VERIFY_PAUSE_SEC:-0.15}"
 REALITY_SSL_VERIFY="${REALITY_SSL_VERIFY:-1}"
@@ -322,7 +328,8 @@ run_once() {
   local INBOUND_ID STREAM_JSON current_dest current_host best_host best_ms NEW_JSON TMPJSON
   local cur_lc best_lc best_ping_ms h ms summary current_probe
   local -a top_hosts=()
-  local th tm med vh vm
+  local th tm med vh vm tmin_r1 r1_h r1_t sorted_ok verify_rank top5
+  local -A seen_verify=()
 
   INBOUND_ID=$(sqlite3 "$XUI_DB" "SELECT id FROM inbounds WHERE enable = 1 AND port = 443 AND protocol = 'vless' LIMIT 1;" | tr -d '\r\n' || true)
   if [ -z "$INBOUND_ID" ]; then
@@ -394,32 +401,52 @@ run_once() {
     IFS=$'\t' read -r best_host best_ms <<<"$best_line"
   fi
 
-  # Вторая волна: топ кандидатов из 1-й — последовательно, медиана из VERIFY_SAMPLES (меньше шума при PROBE_PARALLEL)
+  # Вторая волна: кандидаты = полоса от лидера 1-й волны (±VERIFY_MARGIN_SEC) + добор до VERIFY_TOP_N;
+  # затем медиана VERIFY_SAMPLES на каждого → победитель = минимальная медиана (самый устойчиво быстрый)
   if [[ "$VERIFY_TOP_N" =~ ^[0-9]+$ ]] && (( VERIFY_TOP_N > 0 )) && [[ -n "$best_host" ]]; then
-    top_hosts=()
-    while IFS=$'\t' read -r th tm && [[ ${#top_hosts[@]} -lt "$VERIFY_TOP_N" ]]; do
-      [[ -z "$th" || "$th" == "_FAIL_" ]] && continue
-      top_hosts+=("$th")
-    done < <(set +o pipefail; grep -v '^_FAIL_' "$probeout" 2>/dev/null | sort -t $'\t' -k2,2n)
-
-    vh=""
-    vm=""
-    for th in "${top_hosts[@]}"; do
-      med="$(probe_median_verify "$th" 2>/dev/null)" || continue
-      [[ -z "$med" ]] && continue
-      if [[ -z "$vm" ]] || awk -v a="$med" -v b="$vm" 'BEGIN { exit !(a < b) }'; then
-        vh="$th"
-        vm="$med"
-      fi
-    done
-    if [[ -n "$vh" && -n "$vm" ]]; then
-      vm="${vm//$'\r'/}"
-      vm="$(printf '%s' "$vm" | tr -d '\n')"
-      log "verify: top${#top_hosts[@]} (cap ${VERIFY_TOP_N}), ${VERIFY_SAMPLES} samples/host median, ssl_verify=${REALITY_SSL_VERIFY} → pick $vh (${vm}s) [was round1 $best_host (${best_ms}s)]"
-      best_host="$vh"
-      best_ms="$vm"
+    sorted_ok="$(mktemp)"
+    grep -v '^_FAIL_' "$probeout" 2>/dev/null | sort -t $'\t' -k2,2g >"$sorted_ok" || true
+    IFS=$'\t' read -r r1_h r1_t < <(head -1 "$sorted_ok" 2>/dev/null || echo "")
+    tmin_r1="$r1_t"
+    if [[ -z "$tmin_r1" ]]; then
+      rm -f "$sorted_ok"
     else
-      log "verify: no host passed median re-probe — using round-1 winner ${best_host:-?} (${best_ms:-?}s)"
+      seen_verify=()
+      top_hosts=()
+      while IFS=$'\t' read -r h t; do
+        [[ -z "$h" ]] && continue
+        awk -v tt="$t" -v lo="$tmin_r1" -v m="$VERIFY_MARGIN_SEC" 'BEGIN { exit (tt <= lo + m) ? 0 : 1 }' || break
+        [[ -n "${seen_verify[$h]:-}" ]] && continue
+        seen_verify[$h]=1
+        top_hosts+=("$h")
+        [[ ${#top_hosts[@]} -ge $VERIFY_MAX_CANDIDATES ]] && break
+      done <"$sorted_ok"
+      if (( ${#top_hosts[@]} < VERIFY_TOP_N )); then
+        while IFS=$'\t' read -r h t; do
+          [[ -z "$h" ]] && continue
+          [[ -n "${seen_verify[$h]:-}" ]] && continue
+          seen_verify[$h]=1
+          top_hosts+=("$h")
+          (( ${#top_hosts[@]} >= VERIFY_TOP_N )) && break
+        done <"$sorted_ok"
+      fi
+      verify_rank="$(mktemp)"
+      for th in "${top_hosts[@]}"; do
+        med="$(probe_median_verify "$th" 2>/dev/null)" || continue
+        [[ -z "$med" ]] && continue
+        med="$(printf '%s' "$med" | tr -d '\r\n')"
+        printf '%s\t%s\n' "$med" "$th" >>"$verify_rank"
+      done
+      if [[ -s "$verify_rank" ]]; then
+        IFS=$'\t' read -r vm vh <<<"$(sort -t $'\t' -k1,1g -k2,2 "$verify_rank" | head -1)"
+        top5="$(sort -t $'\t' -k1,1g -k2,2 "$verify_rank" | head -5 | awk -F '\t' '{ printf "%s=%.4fs ", $2, $1 }')"
+        log "verify: ${#top_hosts[@]} cand (r1min=${tmin_r1}s ±${VERIFY_MARGIN_SEC}s, max${VERIFY_MAX_CANDIDATES}) ${VERIFY_SAMPLES}×median ssl=${REALITY_SSL_VERIFY} → winner $vh (${vm}s) | $top5 [r1 fastest $r1_h]"
+        best_host="$vh"
+        best_ms="$vm"
+      else
+        log "verify: no median scores — using round-1 $best_host (${best_ms}s)"
+      fi
+      rm -f "$sorted_ok" "$verify_rank"
     fi
   fi
 
@@ -516,7 +543,7 @@ run_once_locked() {
 MODE="${1:-once}"
 case "$MODE" in
   watch)
-    log "watcher start, interval=${WATCH_INTERVAL_SEC}s, pool=$CANDIDATES_FILE (${#CANDIDATES[@]} hosts), PROBE_PARALLEL=$PROBE_PARALLEL verify_top=${VERIFY_TOP_N} samples=${VERIFY_SAMPLES} ssl_verify=${REALITY_SSL_VERIFY}"
+    log "watcher start, interval=${WATCH_INTERVAL_SEC}s, pool=$CANDIDATES_FILE (${#CANDIDATES[@]} hosts), PROBE_PARALLEL=$PROBE_PARALLEL verify_top=${VERIFY_TOP_N} margin=${VERIFY_MARGIN_SEC}s maxcand=${VERIFY_MAX_CANDIDATES} samples=${VERIFY_SAMPLES} ssl=${REALITY_SSL_VERIFY}"
     while true; do
       run_once_locked || true
       sleep "$WATCH_INTERVAL_SEC"

@@ -15,6 +15,8 @@ Type=simple
 # Environment=RESTART_XUI_ON_KEEP=0
 # Environment=PROBE_PARALLEL=12
 # Environment=VERIFY_TOP_N=8
+# Environment=VERIFY_MARGIN_SEC=0.15
+# Environment=VERIFY_MAX_CANDIDATES=32
 # Environment=VERIFY_SAMPLES=3
 # Environment=REALITY_SSL_VERIFY=1
 # Push (ntfy или Telegram — см. REALITY-FAILOVER.md)
