@@ -13,7 +13,10 @@ Type=simple
 # Environment=BUMP_SUB_ANNOUNCE=1
 # Environment=BUMP_SUB_ON_KEEP=1
 # Environment=RESTART_XUI_ON_KEEP=0
-# Environment=PROBE_PARALLEL=40
+# Environment=PROBE_PARALLEL=12
+# Environment=VERIFY_TOP_N=8
+# Environment=VERIFY_SAMPLES=3
+# Environment=REALITY_SSL_VERIFY=1
 # Push (ntfy или Telegram — см. REALITY-FAILOVER.md)
 # Telegram по умолчанию из панели 3x-ui (settings: tgBotToken, tgBotChatId); ниже — override
 # Environment=NOTIFY_URL=https://ntfy.sh/secret-topic
