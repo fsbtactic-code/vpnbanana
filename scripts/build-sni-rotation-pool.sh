@@ -3,14 +3,15 @@
 # (резолв DNS + HTTPS с TLS 1.3 и проверкой сертификата под имя хоста — как у curl без -k).
 # Сохраняет отсортированный по задержке список для reality-failover (ротация раз в 30 мин).
 #
-# Апстрим «широкого» списка в репо: data/sni-candidates.txt (или merge-sni-pools.sh).
+# Рекомендуемая база: data/SNICDN.txt (CDN-focused).
+# Широкий fallback: data/sni-candidates.txt (или merge-sni-pools.sh).
 #
 # Usage:
 #   sudo ./scripts/build-sni-rotation-pool.sh
 #   SOURCE=/path/in.txt OUT=/path/out.txt TOP_N=80 PARALLEL=40 ./scripts/build-sni-rotation-pool.sh
 #
 # Env:
-#   SOURCE          — входной список хостов (по умолчанию /usr/local/share/reality-failover/sni-candidates.txt)
+#   SOURCE          — входной список хостов (по умолчанию /usr/local/share/reality-failover/sni-cdn.txt)
 #   OUT             — куда писать пул для ротации (по умолчанию /usr/local/share/reality-failover/sni-rotation-pool.txt)
 #   TOP_N           — максимум хостов в пуле (по умолчанию 120; 0 = без лимита)
 #   PARALLEL        — параллельные curl (по умолчанию 30)
@@ -27,7 +28,7 @@ set -euo pipefail
 
 TIMEOUT_CONNECT="${TIMEOUT_CONNECT:-3}"
 TIMEOUT_TOTAL="${TIMEOUT_TOTAL:-6}"
-SOURCE="${SOURCE:-/usr/local/share/reality-failover/sni-candidates.txt}"
+SOURCE="${SOURCE:-/usr/local/share/reality-failover/sni-cdn.txt}"
 OUT="${OUT:-/usr/local/share/reality-failover/sni-rotation-pool.txt}"
 TOP_N="${TOP_N:-120}"
 PARALLEL="${PARALLEL:-30}"
@@ -35,7 +36,7 @@ STRICT_OPENSSL="${STRICT_OPENSSL:-0}"
 
 if [[ ! -r "$SOURCE" ]]; then
   echo "SOURCE not readable: $SOURCE" >&2
-  echo "Скачай: curl -fSL -o $SOURCE 'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/data/sni-candidates.txt'" >&2
+  echo "Скачай: curl -fSL -o $SOURCE 'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/data/SNICDN.txt'" >&2
   exit 1
 fi
 

@@ -6,7 +6,7 @@
 
 1. Читает из БД 3x-ui первый **включённый** inbound: `vless`, порт **443**.
 2. Берёт текущий хост из `realitySettings.target` или `dest` (до `:`).
-3. Для **каждого** хоста из пула `CANDIDATES` замеряет время ответа: `curl --tlsv1.3 https://хост/` (как публичный TLS-dest для REALITY). Источник пула: если задан **`CANDIDATES_FILE`** — он; иначе, если есть непустой **`sni-rotation-pool.txt`** (см. [build-sni-rotation-pool.sh](scripts/build-sni-rotation-pool.sh)), берётся он; иначе **`sni-candidates.txt`**; иначе встроенный короткий список.
+3. Для **каждого** хоста из пула `CANDIDATES` замеряет время ответа: `curl --tlsv1.3 https://хост/` (как публичный TLS-dest для REALITY). Источник пула: если задан **`CANDIDATES_FILE`** — он; иначе, если есть непустой **`sni-rotation-pool.txt`** (см. [build-sni-rotation-pool.sh](scripts/build-sni-rotation-pool.sh)), берётся он; иначе **`sni-cdn.txt`** (из `data/SNICDN.txt`); иначе **`sni-candidates.txt`**; иначе встроенный короткий список.
 4. Выбирает хост с **минимальным** временем среди ответивших.
 5. Если он **совпадает** с текущим в БД — только лог `KEEP`, **без** рестарта.
 6. Если **другой** — обновляет `target`, `dest`, `serverNames`, в БД 3x-ui выставляет **`subUpdates`** (часы → заголовок `Profile-Update-Interval`) и **`subAnnounce`** (чтобы клиенты увидели смену подписки), затем перезапускает `x-ui`.
@@ -78,7 +78,8 @@ Environment=TELEGRAM_CLIENT_CHAT_ID=222222222
 
 ## Пул доменов в репозитории
 
-- **[data/sni-candidates.txt](data/sni-candidates.txt)** — итоговый пул для сервера и для [scripts/check-sni-pool.sh](scripts/check-sni-pool.sh). Собирается скриптом [scripts/merge-sni-pools.sh](scripts/merge-sni-pools.sh): **локальный список** + домены из [hxehex/russia-mobile-internet-whitelist](https://github.com/hxehex/russia-mobile-internet-whitelist) (`whitelist.txt`, SNI для мобильного вайтлиста). Первые строки файла — служебные комментарии `#`; дальше по одному хосту в строке.
+- **[data/SNICDN.txt](data/SNICDN.txt)** — CDN/edge‑ориентированный пул для ротации (рекомендуемый базовый источник для failover).
+- **[data/sni-candidates.txt](data/sni-candidates.txt)** — широкий общий пул (fallback). Собирается скриптом [scripts/merge-sni-pools.sh](scripts/merge-sni-pools.sh): **локальный список** + домены из [hxehex/russia-mobile-internet-whitelist](https://github.com/hxehex/russia-mobile-internet-whitelist) (`whitelist.txt`, SNI для мобильного вайтлиста). Первые строки файла — служебные комментарии `#`; дальше по одному хосту в строке.
 - **[data/sni-candidates-local.txt](data/sni-candidates-local.txt)** — правки «свои» только сюда; затем из корня репо: `./scripts/merge-sni-pools.sh` и коммит обновлённого `sni-candidates.txt`.
 
 Переменная **`MOBILE_WHITELIST_URL`** в `merge-sni-pools.sh` задаёт другой raw-URL, если нужен форк или зеркало.
@@ -93,9 +94,9 @@ Environment=TELEGRAM_CLIENT_CHAT_ID=222222222
 2. Проверяет **HTTPS + TLS 1.3** с **проверкой сертификата** (как у `curl` без `-k`) — близко к требованиям к публичному dest у VLESS+REALITY.
 3. Пишет **`/usr/local/share/reality-failover/sni-rotation-pool.txt`**: хосты **по возрастанию задержки**, не больше **`TOP_N`** (по умолчанию **120**).
 
-`reality-failover.sh` **сначала** использует `sni-rotation-pool.txt`, если в нём есть строки-хосты; иначе — полный `sni-candidates.txt`.
+`reality-failover.sh` **сначала** использует `sni-rotation-pool.txt`, если в нём есть строки-хосты; иначе — `sni-cdn.txt`; иначе — `sni-candidates.txt`.
 
-Установка и однократная сборка (после того как уже лежит `sni-candidates.txt`):
+Установка и однократная сборка (после того как уже лежит `sni-cdn.txt`):
 
 ```bash
 sudo curl -fSL -o /usr/local/bin/build-sni-rotation-pool.sh \
@@ -126,6 +127,8 @@ sudo curl -fSL -o /usr/local/bin/reality-failover.sh \
 sudo chmod +x /usr/local/bin/reality-failover.sh
 
 sudo mkdir -p /usr/local/share/reality-failover
+sudo curl -fSL -o /usr/local/share/reality-failover/sni-cdn.txt \
+  'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/data/SNICDN.txt'
 sudo curl -fSL -o /usr/local/share/reality-failover/sni-candidates.txt \
   'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/data/sni-candidates.txt'
 
@@ -133,7 +136,7 @@ sudo curl -fSL -o /usr/local/share/reality-failover/sni-candidates.txt \
 sudo /usr/local/bin/reality-failover.sh once
 ```
 
-Свой список: **`CANDIDATES_FILE`**, либо положи **`sni-rotation-pool.txt`** / **`sni-candidates.txt`** в `/usr/local/share/reality-failover/`.
+Свой список: **`CANDIDATES_FILE`**, либо положи **`sni-rotation-pool.txt`** / **`sni-cdn.txt`** / **`sni-candidates.txt`** в `/usr/local/share/reality-failover/`.
 
 `Environment=CANDIDATES_FILE=/etc/reality-failover/my-pool.txt`
 

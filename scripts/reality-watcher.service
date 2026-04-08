@@ -6,7 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Полный замер пула раз в 30 мин (секунды); изменить: Environment=WATCH_INTERVAL_SEC=3600
-# Пул: приоритет sni-rotation-pool.txt (см. build-sni-rotation-pool.sh), иначе sni-candidates.txt
+# Пул: приоритет sni-rotation-pool.txt (см. build-sni-rotation-pool.sh), иначе sni-cdn.txt, затем sni-candidates.txt
+# Environment=CDN_POOL=/usr/local/share/reality-failover/sni-cdn.txt
 # Свой файл: Environment=CANDIDATES_FILE=/path/to/pool.txt
 # После смены SNI: Profile-Update-Interval (часы) и Announce в БД 3x-ui
 # Environment=SUB_UPDATES_HOURS=1

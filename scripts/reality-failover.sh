@@ -3,9 +3,12 @@
 # =============================================================================
 # REALITY SNI picker for 3x-ui (SQLite)
 #
-# Пул SNI: если читается CANDIDATES_FILE (по умолчанию
-# /usr/local/share/reality-failover/sni-candidates.txt), хосты берутся оттуда
-# (как в data/sni-candidates.txt в репо). Иначе — встроенный короткий список.
+# Пул SNI: если задан CANDIDATES_FILE — берём его.
+# Иначе приоритет такой:
+#   1) /usr/local/share/reality-failover/sni-rotation-pool.txt (лучшие после проверки)
+#   2) /usr/local/share/reality-failover/sni-cdn.txt (CDN-база из data/SNICDN.txt)
+#   3) /usr/local/share/reality-failover/sni-candidates.txt (широкий fallback)
+# Если ничего нет — встроенный короткий список.
 #
 # Логика каждого прогона:
 #   - Замер «задержки» до каждого хоста из пула CANDIDATES (TLS 1.3 + curl), по умолчанию параллельно (PROBE_PARALLEL, по умолчанию умеренный)
@@ -28,6 +31,8 @@
 #     'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/scripts/reality-failover.sh'
 #   sudo chmod +x /usr/local/bin/reality-failover.sh
 #   sudo mkdir -p /usr/local/share/reality-failover
+#   sudo curl -fSL -o /usr/local/share/reality-failover/sni-cdn.txt \
+#     'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/data/SNICDN.txt'
 #   sudo curl -fSL -o /usr/local/share/reality-failover/sni-candidates.txt \
 #     'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/data/sni-candidates.txt'
 #
@@ -37,7 +42,7 @@
 # Systemd:
 #   sudo systemctl daemon-reload && sudo systemctl restart reality-watcher
 #
-# Env: XUI_DB, CANDIDATES_FILE, ROTATION_POOL, WIDE_POOL, TIMEOUT_CONNECT, TIMEOUT_TOTAL,
+# Env: XUI_DB, CANDIDATES_FILE, ROTATION_POOL, CDN_POOL, WIDE_POOL, TIMEOUT_CONNECT, TIMEOUT_TOTAL,
 #      WATCH_INTERVAL_SEC (default 1800),
 #      SUB_UPDATES_HOURS (после смены SNI: интервал в заголовке Profile-Update-Interval, часы),
 #      BUMP_SUB_ANNOUNCE (1/0 — обновить Announce в БД 3x-ui, чтобы клиенты заметили смену подписки)
@@ -88,6 +93,7 @@ REALITY_SSL_VERIFY="${REALITY_SSL_VERIFY:-1}"
 (( VERIFY_SAMPLES < 1 )) && VERIFY_SAMPLES=1
 
 ROTATION_POOL="${ROTATION_POOL:-/usr/local/share/reality-failover/sni-rotation-pool.txt}"
+CDN_POOL="${CDN_POOL:-/usr/local/share/reality-failover/sni-cdn.txt}"
 WIDE_POOL="${WIDE_POOL:-/usr/local/share/reality-failover/sni-candidates.txt}"
 
 rotation_pool_nonempty() {
@@ -97,6 +103,8 @@ rotation_pool_nonempty() {
 if [[ -z "${CANDIDATES_FILE:-}" ]]; then
   if rotation_pool_nonempty "$ROTATION_POOL"; then
     CANDIDATES_FILE="$ROTATION_POOL"
+  elif rotation_pool_nonempty "$CDN_POOL"; then
+    CANDIDATES_FILE="$CDN_POOL"
   else
     CANDIDATES_FILE="$WIDE_POOL"
   fi
