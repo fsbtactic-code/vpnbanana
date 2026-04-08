@@ -8,7 +8,7 @@
 # (как в data/sni-candidates.txt в репо). Иначе — встроенный короткий список.
 #
 # Логика каждого прогона:
-#   - Замер «задержки» до каждого хоста из пула CANDIDATES (TLS 1.3 + время curl)
+#   - Замер «задержки» до каждого хоста из пула CANDIDATES (TLS 1.3 + время curl), по умолчанию параллельно (PROBE_PARALLEL)
 #   - Выбор хоста с минимальным временем среди ответивших
 #   - Если он отличается от текущего target/dest в БД — обновить JSON и restart x-ui
 #   - Если тот же — только лог, без рестарта
@@ -38,6 +38,8 @@
 #      WATCH_INTERVAL_SEC (default 1800),
 #      SUB_UPDATES_HOURS (после смены SNI: интервал в заголовке Profile-Update-Interval, часы),
 #      BUMP_SUB_ANNOUNCE (1/0 — обновить Announce в БД 3x-ui, чтобы клиенты заметили смену подписки)
+#      PROBE_PARALLEL (одновременных curl; по умолчанию 30; 1 = по одному как раньше)
+#      POOL_PROBE_FULL=1 — в лог весь pool probe (host=time); иначе краткая сводка + sample
 # =============================================================================
 
 set -euo pipefail
@@ -49,6 +51,8 @@ TIMEOUT_CONNECT="${TIMEOUT_CONNECT:-3}"
 TIMEOUT_TOTAL="${TIMEOUT_TOTAL:-6}"
 # 30 минут между полными замерами пула
 WATCH_INTERVAL_SEC="${WATCH_INTERVAL_SEC:-1800}"
+# Параллельные HTTPS-пробы к хостам пула (xargs -P)
+PROBE_PARALLEL="${PROBE_PARALLEL:-30}"
 
 ROTATION_POOL="${ROTATION_POOL:-/usr/local/share/reality-failover/sni-rotation-pool.txt}"
 WIDE_POOL="${WIDE_POOL:-/usr/local/share/reality-failover/sni-candidates.txt}"
@@ -146,6 +150,10 @@ run_once() {
       return 1
     fi
   done
+  if [[ "$PROBE_PARALLEL" =~ ^[0-9]+$ ]] && (( PROBE_PARALLEL > 1 )) && ! command -v xargs >/dev/null; then
+    log "missing xargs — apt install -y findutils (или поставь PROBE_PARALLEL=1)"
+    return 1
+  fi
 
   if [ ! -r "$XUI_DB" ]; then
     log "DB not readable: $XUI_DB"
@@ -179,25 +187,65 @@ run_once() {
     log "no target/dest in DB, compare against pool using placeholder current=$current_host"
   fi
 
-  summary=""
   best_host=""
   best_ms=""
-  for h in "${CANDIDATES[@]}"; do
-    ms=$(probe_ms "$h" 2>/dev/null) || ms=""
-    if [ -n "$ms" ]; then
-      summary="${summary}${summary:+ }${h}=${ms}s"
-      if [ -z "$best_host" ]; then
-        best_host=$h
-        best_ms=$ms
-      elif awk -v a="$ms" -v b="$best_ms" 'BEGIN { exit !(a+0 < b+0) }'; then
-        best_host=$h
-        best_ms=$ms
+  summary=""
+  local hostfile probeout okc fc sample_line
+  hostfile="$(mktemp)"
+  probeout="$(mktemp)"
+
+  printf '%s\n' "${CANDIDATES[@]}" >"$hostfile"
+
+  if [[ "$PROBE_PARALLEL" =~ ^[0-9]+$ ]] && (( PROBE_PARALLEL > 1 )); then
+    export TIMEOUT_CONNECT TIMEOUT_TOTAL
+    xargs -P "$PROBE_PARALLEL" -a "$hostfile" -I{} bash -c '
+      h="$1"
+      ms="$(curl -so /dev/null \
+        --connect-timeout "$TIMEOUT_CONNECT" \
+        --max-time "$TIMEOUT_TOTAL" \
+        --tlsv1.3 \
+        -w "%{time_total}" \
+        "https://$h/" 2>/dev/null)" || ms=""
+      if [[ -n "$ms" ]]; then printf "%s\t%s\n" "$h" "$ms"
+      else printf "_FAIL_\t%s\n" "$h"; fi
+    ' _ {} >"$probeout"
+  else
+    : >"$probeout"
+    while IFS= read -r h; do
+      [[ -z "$h" ]] && continue
+      ms=$(probe_ms "$h" 2>/dev/null) || ms=""
+      if [[ -n "$ms" ]]; then printf '%s\t%s\n' "$h" "$ms"
+      else printf '_FAIL_\t%s\n' "$h"; fi
+    done <"$hostfile" >>"$probeout"
+  fi
+
+  okc=$(grep -cv '^_FAIL_' "$probeout" 2>/dev/null || true)
+  fc=$(grep -c '^_FAIL_' "$probeout" 2>/dev/null || true)
+
+  best_line="$(set +o pipefail; grep -v '^_FAIL_' "$probeout" 2>/dev/null | sort -t $'\t' -k2,2n | head -1)"
+  if [[ -n "$best_line" ]]; then
+    IFS=$'\t' read -r best_host best_ms <<<"$best_line"
+  fi
+
+  if [[ "${POOL_PROBE_FULL:-0}" == "1" ]]; then
+    while IFS=$'\t' read -r c1 c2; do
+      if [[ "$c1" == "_FAIL_" ]]; then
+        summary="${summary}${summary:+ }${c2}=FAIL"
+      else
+        summary="${summary}${summary:+ }${c1}=${c2}s"
       fi
-    else
-      summary="${summary}${summary:+ }${h}=FAIL"
-    fi
-  done
-  log "pool probe: $summary"
+    done <"$probeout"
+    log "pool probe (parallel=${PROBE_PARALLEL}): $summary"
+  else
+    sample_line=""
+    while IFS=$'\t' read -r hh mm; do
+      [[ "$hh" == "_FAIL_" || -z "$hh" ]] && continue
+      sample_line="${sample_line}${sample_line:+ }${hh}=${mm}s"
+    done < <(set +o pipefail; grep -v '^_FAIL_' "$probeout" 2>/dev/null | sort -t $'\t' -k2,2n | head -8)
+    log "pool probe: parallel=${PROBE_PARALLEL} ok=${okc} fail=${fc} fastest=${best_host:-none} ${best_ms:--}s sample:${sample_line:+ $sample_line}"
+  fi
+
+  rm -f "$hostfile" "$probeout"
 
   if [ -z "$best_host" ]; then
     log "ERROR: no host in pool responded — config unchanged"
@@ -240,7 +288,7 @@ run_once_locked() {
 MODE="${1:-once}"
 case "$MODE" in
   watch)
-    log "watcher start, interval=${WATCH_INTERVAL_SEC}s, pool=$CANDIDATES_FILE (${#CANDIDATES[@]} hosts)"
+    log "watcher start, interval=${WATCH_INTERVAL_SEC}s, pool=$CANDIDATES_FILE (${#CANDIDATES[@]} hosts), PROBE_PARALLEL=$PROBE_PARALLEL"
     while true; do
       run_once_locked || true
       sleep "$WATCH_INTERVAL_SEC"

@@ -11,6 +11,7 @@ Type=simple
 # После смены SNI: Profile-Update-Interval (часы) и Announce в БД 3x-ui
 # Environment=SUB_UPDATES_HOURS=1
 # Environment=BUMP_SUB_ANNOUNCE=1
+# Environment=PROBE_PARALLEL=40
 Environment=WATCH_INTERVAL_SEC=1800
 ExecStart=/usr/local/bin/reality-failover.sh watch
 Restart=always

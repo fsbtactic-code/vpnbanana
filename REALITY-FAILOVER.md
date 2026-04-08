@@ -83,6 +83,8 @@ sudo /usr/local/bin/reality-failover.sh once
 
 `Environment=CANDIDATES_FILE=/etc/reality-failover/my-pool.txt`
 
+Замер пула к целям идёт **параллельно** (`PROBE_PARALLEL`, по умолчанию **30**). Полный лог всех хостов: `POOL_PROBE_FULL=1`. Последовательно как раньше: `PROBE_PARALLEL=1`.
+
 Для подписки после смены SNI (в том же drop-in):
 
 `Environment=SUB_UPDATES_HOURS=1`
