@@ -107,7 +107,9 @@ else
   done < "$tmp"
 fi
 
-sort -t $'\t' -k2,2 "$out"
+# OK — по возрастанию задержки (колонка 3); FAIL — по имени хоста
+awk -F '\t' '$1=="OK"{print}' "$out" | sort -t $'\t' -k3,3n
+awk -F '\t' '$1=="FAIL"{print}' "$out" | sort -t $'\t' -k2,2
 ok=$(grep -c '^OK' "$out" || true)
 fail=$(grep -c '^FAIL' "$out" || true)
 echo "--- итого: OK=$ok FAIL=$fail (уникальных хостов: $(wc -l <"$tmp"))" >&2

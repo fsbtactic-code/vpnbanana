@@ -34,7 +34,10 @@
 # Systemd:
 #   sudo systemctl daemon-reload && sudo systemctl restart reality-watcher
 #
-# Env: XUI_DB, CANDIDATES_FILE, TIMEOUT_CONNECT, TIMEOUT_TOTAL, WATCH_INTERVAL_SEC (default 1800)
+# Env: XUI_DB, CANDIDATES_FILE, ROTATION_POOL, WIDE_POOL, TIMEOUT_CONNECT, TIMEOUT_TOTAL,
+#      WATCH_INTERVAL_SEC (default 1800),
+#      SUB_UPDATES_HOURS (после смены SNI: интервал в заголовке Profile-Update-Interval, часы),
+#      BUMP_SUB_ANNOUNCE (1/0 — обновить Announce в БД 3x-ui, чтобы клиенты заметили смену подписки)
 # =============================================================================
 
 set -euo pipefail
@@ -47,7 +50,24 @@ TIMEOUT_TOTAL="${TIMEOUT_TOTAL:-6}"
 # 30 минут между полными замерами пула
 WATCH_INTERVAL_SEC="${WATCH_INTERVAL_SEC:-1800}"
 
-CANDIDATES_FILE="${CANDIDATES_FILE:-/usr/local/share/reality-failover/sni-candidates.txt}"
+ROTATION_POOL="${ROTATION_POOL:-/usr/local/share/reality-failover/sni-rotation-pool.txt}"
+WIDE_POOL="${WIDE_POOL:-/usr/local/share/reality-failover/sni-candidates.txt}"
+
+rotation_pool_nonempty() {
+  [[ -r "$1" ]] && [[ "$(grep -vE '^[[:space:]]*(#|$)' "$1" 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ]]
+}
+
+if [[ -z "${CANDIDATES_FILE:-}" ]]; then
+  if rotation_pool_nonempty "$ROTATION_POOL"; then
+    CANDIDATES_FILE="$ROTATION_POOL"
+  else
+    CANDIDATES_FILE="$WIDE_POOL"
+  fi
+fi
+
+# SUB_UPDATES_HOURS: в 3x-ui ключ settings.subUpdates = часы для заголовка Profile-Update-Interval (см. subController.go)
+SUB_UPDATES_HOURS="${SUB_UPDATES_HOURS:-1}"
+BUMP_SUB_ANNOUNCE="${BUMP_SUB_ANNOUNCE:-1}"
 
 fill_candidates_from_file() {
   local f="$1"
@@ -102,6 +122,22 @@ probe_ms() {
 }
 
 host_lc() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# Подтолкнуть клиентов к перезагрузке подписки: минимальный интервал в заголовке + новый Announce.
+bump_subscription_headers() {
+  local hours="$1"
+  local stamp esc
+  [[ ! -r "$XUI_DB" ]] && return 0
+  [[ "$hours" =~ ^[0-9]+$ ]] || hours=1
+  sqlite3 "$XUI_DB" "UPDATE settings SET value='$hours' WHERE key='subUpdates';" 2>/dev/null \
+    || sqlite3 "$XUI_DB" "UPDATE setting SET value='$hours' WHERE key='subUpdates';" 2>/dev/null || true
+  if [[ "${BUMP_SUB_ANNOUNCE}" == "1" ]]; then
+    stamp="$(date -Iseconds 2>/dev/null || date)"
+    esc="${stamp//\'/\'\'}"
+    sqlite3 "$XUI_DB" "UPDATE settings SET value='SNI sync ${esc}' WHERE key='subAnnounce';" 2>/dev/null \
+      || sqlite3 "$XUI_DB" "UPDATE setting SET value='SNI sync ${esc}' WHERE key='subAnnounce';" 2>/dev/null || true
+  fi
+}
 
 run_once() {
   for bin in jq curl sqlite3; do
@@ -188,8 +224,9 @@ run_once() {
   trap 'rm -f "$TMPJSON"' RETURN
   printf '%s' "$NEW_JSON" > "$TMPJSON"
   sqlite3 "$XUI_DB" "UPDATE inbounds SET stream_settings = readfile('$TMPJSON') WHERE id = ${INBOUND_ID};"
+  bump_subscription_headers "$SUB_UPDATES_HOURS"
   systemctl restart x-ui
-  log "UPDATED id=$INBOUND_ID target/dest=${best_host}:443 — x-ui restarted (refresh subscription / sni)"
+  log "UPDATED id=$INBOUND_ID target/dest=${best_host}:443 — x-ui restarted; subUpdates=${SUB_UPDATES_HOURS}h + subAnnounce bump (Profile-Update-Interval / Announce)"
   return 0
 }
 
@@ -203,7 +240,7 @@ run_once_locked() {
 MODE="${1:-once}"
 case "$MODE" in
   watch)
-    log "watcher start, interval=${WATCH_INTERVAL_SEC}s (default 1800 = 30 min)"
+    log "watcher start, interval=${WATCH_INTERVAL_SEC}s, pool=$CANDIDATES_FILE (${#CANDIDATES[@]} hosts)"
     while true; do
       run_once_locked || true
       sleep "$WATCH_INTERVAL_SEC"

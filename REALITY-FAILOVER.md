@@ -6,18 +6,21 @@
 
 1. Читает из БД 3x-ui первый **включённый** inbound: `vless`, порт **443**.
 2. Берёт текущий хост из `realitySettings.target` или `dest` (до `:`).
-3. Для **каждого** хоста из пула `CANDIDATES` замеряет время ответа: `curl --tlsv1.3 https://хост/` (это практичный аналог «пинга» до HTTPS с твоего VPS). Пул по умолчанию читается из файла **`CANDIDATES_FILE`** (см. ниже); если файла нет — используется короткий встроенный список.
+3. Для **каждого** хоста из пула `CANDIDATES` замеряет время ответа: `curl --tlsv1.3 https://хост/` (как публичный TLS-dest для REALITY). Источник пула: если задан **`CANDIDATES_FILE`** — он; иначе, если есть непустой **`sni-rotation-pool.txt`** (см. [build-sni-rotation-pool.sh](scripts/build-sni-rotation-pool.sh)), берётся он; иначе **`sni-candidates.txt`**; иначе встроенный короткий список.
 4. Выбирает хост с **минимальным** временем среди ответивших.
 5. Если он **совпадает** с текущим в БД — только лог `KEEP`, **без** рестарта.
-6. Если **другой** — обновляет `target`, `dest`, `serverNames` и перезапускает `x-ui`.
+6. Если **другой** — обновляет `target`, `dest`, `serverNames`, в БД 3x-ui выставляет **`subUpdates`** (часы → заголовок `Profile-Update-Interval`) и **`subAnnounce`** (чтобы клиенты увидели смену подписки), затем перезапускает `x-ui`.
 
 Интервал в режиме `watch`: **`WATCH_INTERVAL_SEC`** (по умолчанию **1800** = 30 минут).
 
 ## Важно про клиенты
 
-После смены SNI старые ссылки `vless://...&sni=старый...` **перестанут совпадать** с сервером.
+После смены SNI старые ссылки `vless://...&sni=старый...` **перестанут совпадать** с сервером. Скрипт после смены SNI обновляет в SQLite 3x-ui **`subUpdates`** (по умолчанию **1** час → заголовок **`Profile-Update-Interval`**, см. [subController.go](https://github.com/MHSanaei/3x-ui/blob/main/sub/subController.go)) и **`subAnnounce`** (заголовок **`Announce`**), чтобы приложения чаще подтягивали подписку и замечали изменение.
 
-Нужно либо **subscription** из панели с автообновлением, либо после смены заново экспортировать узел и обновить конфиг вручную.
+- Переменные: **`SUB_UPDATES_HOURS`** (например `1`), **`BUMP_SUB_ANNOUNCE=0`** — не трогать текст объявления.
+- Полностью «мгновенно» на стороне клиента зависит от приложения; при обратном прокси на порт подписки (**2096**) отключи кэш: `Cache-Control: no-store` для пути `/sub/`.
+
+Нужна **subscription** из панели с автообновлением или ручное обновление конфига.
 
 ## Пул доменов в репозитории
 
@@ -26,7 +29,38 @@
 
 Переменная **`MOBILE_WHITELIST_URL`** в `merge-sni-pools.sh` задаёт другой raw-URL, если нужен форк или зеркало.
 
-**Нагрузка:** в пуле сотни и тысячи хостов каждый прогон `reality-failover.sh` опрашивает их **последовательно** (до нескольких минут). Имеет смысл прогнать [check-sni-pool.sh](scripts/check-sni-pool.sh), оставить в рабочем файле на сервере только `OK`-хосты или сократить список вручную.
+**Нагрузка:** тысячи хостов в `sni-candidates.txt` дают долгий каждый прогон failover. Рекомендуется один раз собрать **укороченный пул** (см. ниже).
+
+## Отбор доменов на сервере → пул для ротации
+
+Скрипт **[scripts/build-sni-rotation-pool.sh](scripts/build-sni-rotation-pool.sh)** с VPS:
+
+1. Резолвит имя (**`getent ahosts`**).
+2. Проверяет **HTTPS + TLS 1.3** с **проверкой сертификата** (как у `curl` без `-k`) — близко к требованиям к публичному dest у VLESS+REALITY.
+3. Пишет **`/usr/local/share/reality-failover/sni-rotation-pool.txt`**: хосты **по возрастанию задержки**, не больше **`TOP_N`** (по умолчанию **120**).
+
+`reality-failover.sh` **сначала** использует `sni-rotation-pool.txt`, если в нём есть строки-хосты; иначе — полный `sni-candidates.txt`.
+
+Установка и однократная сборка (после того как уже лежит `sni-candidates.txt`):
+
+```bash
+sudo curl -fSL -o /usr/local/bin/build-sni-rotation-pool.sh \
+  'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/scripts/build-sni-rotation-pool.sh'
+sudo chmod +x /usr/local/bin/build-sni-rotation-pool.sh
+
+# опционально: TOP_N=80 PARALLEL=40
+sudo env TOP_N=120 PARALLEL=30 /usr/local/bin/build-sni-rotation-pool.sh
+```
+
+Проверка результата:
+
+```bash
+grep -v '^#' /usr/local/share/reality-failover/sni-rotation-pool.txt | head -20
+wc -l /usr/local/share/reality-failover/sni-rotation-pool.txt
+sudo /usr/local/bin/reality-failover.sh once
+```
+
+Для **только отчёта** без записи пула (сортировка OK по времени) подойдёт [check-sni-pool.sh](scripts/check-sni-pool.sh) с `PARALLEL=25`.
 
 ## Установка на сервере
 
@@ -45,9 +79,15 @@ sudo curl -fSL -o /usr/local/share/reality-failover/sni-candidates.txt \
 sudo /usr/local/bin/reality-failover.sh once
 ```
 
-Свой список: положи файл на сервер и задай переменную **`CANDIDATES_FILE`** (например в `systemctl edit reality-watcher`):
+Свой список: **`CANDIDATES_FILE`**, либо положи **`sni-rotation-pool.txt`** / **`sni-candidates.txt`** в `/usr/local/share/reality-failover/`.
 
 `Environment=CANDIDATES_FILE=/etc/reality-failover/my-pool.txt`
+
+Для подписки после смены SNI (в том же drop-in):
+
+`Environment=SUB_UPDATES_HOURS=1`
+
+`Environment=BUMP_SUB_ANNOUNCE=1`
 
 ## Постоянный «слушатель» (systemd) — рекомендуется
 
