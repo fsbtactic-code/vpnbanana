@@ -40,6 +40,8 @@
 #      BUMP_SUB_ANNOUNCE (1/0 — обновить Announce в БД 3x-ui, чтобы клиенты заметили смену подписки)
 #      PROBE_PARALLEL (одновременных curl; по умолчанию 30; 1 = по одному как раньше)
 #      POOL_PROBE_FULL=1 — в лог весь pool probe (host=time); иначе краткая сводка + sample
+#      BUMP_SUB_ON_KEEP=1 — при KEEP всё равно обновить subUpdates/subAnnounce (клиенты чаще тянут подписку)
+#      RESTART_XUI_ON_KEEP=1 — после KEEP перезапустить x-ui (тяжелее; обычно не нужно)
 # =============================================================================
 
 set -euo pipefail
@@ -72,6 +74,8 @@ fi
 # SUB_UPDATES_HOURS: в 3x-ui ключ settings.subUpdates = часы для заголовка Profile-Update-Interval (см. subController.go)
 SUB_UPDATES_HOURS="${SUB_UPDATES_HOURS:-1}"
 BUMP_SUB_ANNOUNCE="${BUMP_SUB_ANNOUNCE:-1}"
+BUMP_SUB_ON_KEEP="${BUMP_SUB_ON_KEEP:-1}"
+RESTART_XUI_ON_KEEP="${RESTART_XUI_ON_KEEP:-0}"
 
 fill_candidates_from_file() {
   local f="$1"
@@ -257,6 +261,14 @@ run_once() {
 
   if [ "$cur_lc" = "$best_lc" ]; then
     log "KEEP current=$current_host (fastest in pool, ${best_ms}s)"
+    if [[ "${BUMP_SUB_ON_KEEP}" == "1" ]]; then
+      bump_subscription_headers "$SUB_UPDATES_HOURS"
+      log "subscription headers refreshed on KEEP (subUpdates=${SUB_UPDATES_HOURS}h, subAnnounce) — refetch subscription in client"
+      if [[ "${RESTART_XUI_ON_KEEP}" == "1" ]]; then
+        systemctl restart x-ui
+        log "x-ui restarted (RESTART_XUI_ON_KEEP=1)"
+      fi
+    fi
     return 0
   fi
 
