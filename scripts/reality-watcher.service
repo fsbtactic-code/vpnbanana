@@ -15,6 +15,7 @@ Type=simple
 # Environment=RESTART_XUI_ON_KEEP=0
 # Environment=PROBE_PARALLEL=40
 # Push (ntfy или Telegram — см. REALITY-FAILOVER.md)
+# Telegram по умолчанию из панели 3x-ui (settings: tgBotToken, tgBotChatId); ниже — override
 # Environment=NOTIFY_URL=https://ntfy.sh/secret-topic
 # Environment=NOTIFY_TITLE=VPN
 # Environment=TELEGRAM_BOT_TOKEN=

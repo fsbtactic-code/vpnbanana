@@ -44,7 +44,16 @@ Environment=NOTIFY_TITLE=VPN bananamaster
 
 ### Вариант B — Telegram (админ + клиент)
 
-Создай бота у [@BotFather](https://t.me/BotFather), узнай `chat_id` для себя и для клиента (личка / группа; для группы часто отрицательный id):
+**По умолчанию** скрипт читает настройки из панели 3x-ui (та же БД `XUI_DB`, таблица `settings`):
+
+| Ключ в БД | Где в панели |
+|-------------|----------------|
+| `tgBotToken` | **Settings → Telegram Bot → Telegram Token** |
+| `tgBotChatId` | **Admin Chat ID** — можно несколько через **запятую**; для failover: **первый** ID → админ, **второй** → клиент (если нужен второй получатель) |
+
+Если в `systemd` заданы `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ADMIN_CHAT_ID` / `TELEGRAM_CLIENT_CHAT_ID`, они **перекрывают** соответствующие значения из БД (удобно для тестов или отдельного бота).
+
+Ручной override без панели:
 
 ```ini
 [Service]

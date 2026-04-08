@@ -50,6 +50,8 @@
 #   NOTIFY_ON_SWITCH=1 — уведомлять при смене SNI (по умолчанию 1)
 #   NOTIFY_ON_KEEP=0 — уведомлять при KEEP+BUMP заголовков (по умолчанию 0, шумно)
 #   TELEGRAM_BOT_TOKEN + TELEGRAM_ADMIN_CHAT_ID + TELEGRAM_CLIENT_CHAT_ID — push в Telegram (оба)
+#   Если переменные пустые — берутся из БД 3x-ui: settings.tgBotToken, settings.tgBotChatId
+#   (в панели: Settings → Telegram Bot — токен и «Admin Chat ID», через запятую: 1-й = админ, 2-й = клиент)
 #   (устаревшее: TELEGRAM_CHAT_ID — один получатель, если админ/клиент не заданы)
 #   SWITCH_MIN_IMPROVE_MS=50 — менять SNI только если выигрыш по curl ≥ N мс (иначе SKIP)
 # =============================================================================
@@ -132,6 +134,39 @@ if [[ ${#CANDIDATES[@]} -eq 0 ]]; then
 fi
 
 log() { echo "$(date -Iseconds) $LOG_TAG $*"; }
+
+# Один ключ из таблицы settings (3x-ui) или setting (старые сборки)
+xui_setting_get() {
+  local key="$1"
+  local v=""
+  v="$(sqlite3 "$XUI_DB" "SELECT value FROM settings WHERE key='${key}';" 2>/dev/null | tr -d '\r\n' || true)"
+  [[ -z "$v" ]] && v="$(sqlite3 "$XUI_DB" "SELECT value FROM setting WHERE key='${key}';" 2>/dev/null | tr -d '\r\n' || true)"
+  printf '%s' "$v"
+}
+
+# Дополняем TELEGRAM_* из панели (MHSanaei/3x-ui: tgBotToken, tgBotChatId — список ID через запятую)
+load_telegram_from_xui_db() {
+  [[ ! -r "$XUI_DB" ]] && return 0
+  if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
+    TELEGRAM_BOT_TOKEN="$(xui_setting_get tgBotToken)"
+  fi
+  local raw
+  raw="$(xui_setting_get tgBotChatId)"
+  [[ -z "$raw" ]] && return 0
+  local -a ids=()
+  IFS=',' read -ra ids <<< "$raw"
+  local i
+  for i in "${!ids[@]}"; do
+    ids[i]="$(echo "${ids[i]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  done
+
+  if [[ -z "${TELEGRAM_ADMIN_CHAT_ID:-}" ]] && [[ ${#ids[@]} -gt 0 ]] && [[ -n "${ids[0]}" ]]; then
+    TELEGRAM_ADMIN_CHAT_ID="${ids[0]}"
+  fi
+  if [[ -z "${TELEGRAM_CLIENT_CHAT_ID:-}" ]] && [[ ${#ids[@]} -gt 1 ]] && [[ -n "${ids[1]}" ]]; then
+    TELEGRAM_CLIENT_CHAT_ID="${ids[1]}"
+  fi
+}
 
 # «Пинг» в сторону HTTPS: полное время запроса (секунды, float)
 probe_ms() {
@@ -233,6 +268,8 @@ run_once() {
     log "DB not readable: $XUI_DB"
     return 1
   fi
+
+  load_telegram_from_xui_db
 
   local INBOUND_ID STREAM_JSON current_dest current_host best_host best_ms NEW_JSON TMPJSON
   local cur_lc best_lc best_ping_ms h ms summary current_probe
