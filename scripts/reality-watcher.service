@@ -1,12 +1,12 @@
 [Unit]
-Description=REALITY SNI watcher (3x-ui failover when dest host is down)
+Description=REALITY SNI watcher (pick fastest SNI from pool every 30 min)
 After=network-online.target x-ui.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-# Проверка раз в 60 с; изменить: Environment=WATCH_INTERVAL_SEC=120
-Environment=WATCH_INTERVAL_SEC=60
+# Полный замер пула раз в 30 мин (секунды); изменить: Environment=WATCH_INTERVAL_SEC=3600
+Environment=WATCH_INTERVAL_SEC=1800
 ExecStart=/usr/local/bin/reality-failover.sh watch
 Restart=always
 RestartSec=10

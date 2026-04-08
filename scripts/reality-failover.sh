@@ -1,31 +1,30 @@
 #!/bin/bash
 # =============================================================================
-# REALITY SNI / dest failover for 3x-ui (SQLite)
+# REALITY SNI picker for 3x-ui (SQLite)
 #
-# Modes:
-#   (no args) | once   — один прогон (удобно для cron)
-#   watch              — постоянный «слушатель»: раз в WATCH_INTERVAL_SEC секунд
+# Логика каждого прогона:
+#   - Замер «задержки» до каждого хоста из пула CANDIDATES (TLS 1.3 + время curl)
+#   - Выбор хоста с минимальным временем среди ответивших
+#   - Если он отличается от текущего target/dest в БД — обновить JSON и restart x-ui
+#   - Если тот же — только лог, без рестарта
 #
-# Logic (each run):
-#   - If current reality host answers (TLS 1.3 HTTPS) -> OK
-#   - Else pick fastest host from CANDIDATES that answers
-#   - Update stream_settings, restart x-ui
+# Режимы:
+#   once | (пусто)  — один прогон
+#   watch           — цикл раз в WATCH_INTERVAL_SEC (по умолчанию 1800 = 30 мин)
 #
-# Clients: после смены SNI обнови subscription или vless (sni=).
+# Клиенты: после смены SNI обнови subscription / sni= в vless.
 #
 # Install:
 #   sudo apt install -y jq curl sqlite3 util-linux
 #   sudo install -m 755 reality-failover.sh /usr/local/bin/reality-failover.sh
 #
-# Cron (раз в 10 мин):
-#   */10 * * * * root /usr/local/bin/reality-failover.sh once >> /var/log/reality-failover.log 2>&1
+# Cron каждые 30 минут:
+#   */30 * * * * root /usr/local/bin/reality-failover.sh once >> /var/log/reality-failover.log 2>&1
 #
-# Systemd watcher (рекомендуется вместо cron):
-#   sudo install -m 644 reality-watcher.service /etc/systemd/system/reality-watcher.service
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now reality-watcher
+# Systemd:
+#   sudo systemctl daemon-reload && sudo systemctl restart reality-watcher
 #
-# Env: XUI_DB, TIMEOUT_CONNECT, TIMEOUT_TOTAL, WATCH_INTERVAL_SEC (default 60)
+# Env: XUI_DB, TIMEOUT_CONNECT, TIMEOUT_TOTAL, WATCH_INTERVAL_SEC (default 1800)
 # =============================================================================
 
 set -euo pipefail
@@ -35,7 +34,8 @@ LOCK="/run/reality-failover.lock"
 LOG_TAG="[reality-failover]"
 TIMEOUT_CONNECT="${TIMEOUT_CONNECT:-3}"
 TIMEOUT_TOTAL="${TIMEOUT_TOTAL:-6}"
-WATCH_INTERVAL_SEC="${WATCH_INTERVAL_SEC:-60}"
+# 30 минут между полными замерами пула
+WATCH_INTERVAL_SEC="${WATCH_INTERVAL_SEC:-1800}"
 
 CANDIDATES=(
   nalog.ru
@@ -52,6 +52,7 @@ CANDIDATES=(
 
 log() { echo "$(date -Iseconds) $LOG_TAG $*"; }
 
+# «Пинг» в сторону HTTPS: полное время запроса (секунды, float)
 probe_ms() {
   curl -so /dev/null \
     --connect-timeout "$TIMEOUT_CONNECT" \
@@ -61,11 +62,8 @@ probe_ms() {
     "https://$1/" 2>/dev/null || return 1
 }
 
-is_up() {
-  probe_ms "$1" >/dev/null 2>&1
-}
+host_lc() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
 
-# One check cycle. Returns 0 always unless fatal misconfig (missing deps).
 run_once() {
   for bin in jq curl sqlite3; do
     if ! command -v "$bin" >/dev/null; then
@@ -80,8 +78,8 @@ run_once() {
   fi
 
   local INBOUND_ID STREAM_JSON current_dest current_host best_host best_ms NEW_JSON TMPJSON
+  local cur_lc best_lc h ms summary
 
-  # Два запроса: stream_settings — многострочный JSON; один SELECT с «id|json» ломается на переносах строк
   INBOUND_ID=$(sqlite3 "$XUI_DB" "SELECT id FROM inbounds WHERE enable = 1 AND port = 443 AND protocol = 'vless' LIMIT 1;" | tr -d '\r\n' || true)
   if [ -z "$INBOUND_ID" ]; then
     log "no enabled vless inbound on 443 — create in panel"
@@ -98,43 +96,48 @@ run_once() {
     return 0
   fi
 
-  # 3x-ui: новые версии — realitySettings.target; старые — .dest (Xray-стиль)
   current_dest=$(echo "$STREAM_JSON" | jq -r '.realitySettings.target // .realitySettings.dest // empty' 2>/dev/null || true)
   current_host="${current_dest%%:*}"
 
   if [ -z "$current_host" ] || [ "$current_host" = "null" ]; then
     current_host="${CANDIDATES[0]}"
-    log "no target/dest in DB, treat current as $current_host"
+    log "no target/dest in DB, compare against pool using placeholder current=$current_host"
   fi
 
-  if is_up "$current_host"; then
-    log "OK current=$current_host"
-    return 0
-  fi
-
-  log "DOWN current=$current_host — probing candidates..."
-
+  summary=""
   best_host=""
   best_ms=""
   for h in "${CANDIDATES[@]}"; do
-    ms=$(probe_ms "$h" 2>/dev/null) || continue
-    if [ -z "$best_host" ]; then
-      best_host=$h
-      best_ms=$ms
-      continue
-    fi
-    if awk -v a="$ms" -v b="$best_ms" 'BEGIN { exit !(a+0 < b+0) }'; then
-      best_host=$h
-      best_ms=$ms
+    ms=$(probe_ms "$h" 2>/dev/null) || ms=""
+    if [ -n "$ms" ]; then
+      summary="${summary}${summary:+ }${h}=${ms}s"
+      if [ -z "$best_host" ]; then
+        best_host=$h
+        best_ms=$ms
+      elif awk -v a="$ms" -v b="$best_ms" 'BEGIN { exit !(a+0 < b+0) }'; then
+        best_host=$h
+        best_ms=$ms
+      fi
+    else
+      summary="${summary}${summary:+ }${h}=FAIL"
     fi
   done
+  log "pool probe: $summary"
 
   if [ -z "$best_host" ]; then
-    log "ERROR: no candidate responded — config unchanged"
+    log "ERROR: no host in pool responded — config unchanged"
     return 0
   fi
 
-  log "PICK best=$best_host time=${best_ms}s"
+  cur_lc=$(host_lc "$current_host")
+  best_lc=$(host_lc "$best_host")
+
+  if [ "$cur_lc" = "$best_lc" ]; then
+    log "KEEP current=$current_host (fastest in pool, ${best_ms}s)"
+    return 0
+  fi
+
+  log "SWITCH $current_host -> $best_host (best latency ${best_ms}s in pool)"
 
   NEW_JSON=$(echo "$STREAM_JSON" | jq -c --arg h "$best_host" '
     .realitySettings.target = ($h + ":443")
@@ -161,7 +164,7 @@ run_once_locked() {
 MODE="${1:-once}"
 case "$MODE" in
   watch)
-    log "watcher start, interval=${WATCH_INTERVAL_SEC}s"
+    log "watcher start, interval=${WATCH_INTERVAL_SEC}s (default 1800 = 30 min)"
     while true; do
       run_once_locked || true
       sleep "$WATCH_INTERVAL_SEC"
@@ -172,8 +175,8 @@ case "$MODE" in
     ;;
   *)
     echo "Usage: $0 [once|watch]" >&2
-    echo "  once  — single check (default)" >&2
-    echo "  watch — loop every WATCH_INTERVAL_SEC (default 60)" >&2
+    echo "  once  — single run: pick fastest SNI in pool, update if changed" >&2
+    echo "  watch — repeat every WATCH_INTERVAL_SEC (default 1800)" >&2
     exit 1
     ;;
 esac

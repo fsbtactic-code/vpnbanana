@@ -1,15 +1,17 @@
-# Автосмена REALITY dest / SNI (каждые 10 минут)
+# Выбор самого быстрого REALITY SNI из пула (по умолчанию раз в 30 минут)
 
 Скрипт: [scripts/reality-failover.sh](scripts/reality-failover.sh)
 
 ## Что делает
 
 1. Читает из БД 3x-ui первый **включённый** inbound: `vless`, порт **443**.
-2. Берёт текущий хост из `realitySettings.dest` (до `:`).
-3. Проверяет его `curl --tlsv1.3 https://хост/`.
-4. Если **живой** — выходит, ничего не меняет.
-5. Если **не отвечает** — перебирает список `CANDIDATES`, замеряет время ответа, выбирает **самый быстрый** рабочий.
-6. Пишет в `stream_settings` новые `dest` и `serverNames`, перезапускает `x-ui`.
+2. Берёт текущий хост из `realitySettings.target` или `dest` (до `:`).
+3. Для **каждого** хоста из массива `CANDIDATES` замеряет время ответа: `curl --tlsv1.3 https://хост/` (это практичный аналог «пинга» до HTTPS с твоего VPS).
+4. Выбирает хост с **минимальным** временем среди ответивших.
+5. Если он **совпадает** с текущим в БД — только лог `KEEP`, **без** рестарта.
+6. Если **другой** — обновляет `target`, `dest`, `serverNames` и перезапускает `x-ui`.
+
+Интервал в режиме `watch`: **`WATCH_INTERVAL_SEC`** (по умолчанию **1800** = 30 минут).
 
 ## Важно про клиенты
 
@@ -28,12 +30,12 @@ sudo nano /usr/local/bin/reality-failover.sh
 sudo chmod +x /usr/local/bin/reality-failover.sh
 
 # Проверка вручную
-sudo /usr/local/bin/reality-failover.sh
+sudo /usr/local/bin/reality-failover.sh once
 ```
 
 ## Постоянный «слушатель» (systemd) — рекомендуется
 
-Сервис крутит тот же скрипт в режиме `watch`: раз в **60 секунд** (или `WATCH_INTERVAL_SEC`) проверяет хост; если мёртв — переключает.
+Сервис в режиме `watch`: полный замер пула раз в **30 минут** (`WATCH_INTERVAL_SEC=1800`), затем смена SNI только если лидер пула изменился.
 
 ```bash
 sudo curl -fsSL https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/scripts/reality-watcher.service \
@@ -46,13 +48,12 @@ sudo systemctl enable --now reality-watcher
 sudo systemctl status reality-watcher --no-pager
 ```
 
-Интервал, например 120 секунд:
+Интервал, например **1 час**:
 
 ```bash
 sudo systemctl edit reality-watcher
-# В открывшемся override.conf:
 # [Service]
-# Environment=WATCH_INTERVAL_SEC=120
+# Environment=WATCH_INTERVAL_SEC=3600
 sudo systemctl daemon-reload
 sudo systemctl restart reality-watcher
 ```
@@ -74,7 +75,7 @@ sudo /usr/local/bin/reality-failover.sh once
 ## Cron раз в 10 минут (альтернатива watcher)
 
 ```bash
-echo '*/10 * * * * root /usr/local/bin/reality-failover.sh once >> /var/log/reality-failover.log 2>&1' | sudo tee /etc/cron.d/reality-failover
+echo '*/30 * * * * root /usr/local/bin/reality-failover.sh once >> /var/log/reality-failover.log 2>&1' | sudo tee /etc/cron.d/reality-failover
 sudo chmod 644 /etc/cron.d/reality-failover
 ```
 
