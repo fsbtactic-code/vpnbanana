@@ -21,7 +21,12 @@
 
 ## Пул доменов в репозитории
 
-Файл со списком SNI-кандидатов: [data/sni-candidates.txt](data/sni-candidates.txt) (комментарии `#` и пустые строки допускаются). Его же удобно подставлять в [scripts/check-sni-pool.sh](scripts/check-sni-pool.sh) для проверки доступности с VPS.
+- **[data/sni-candidates.txt](data/sni-candidates.txt)** — итоговый пул для сервера и для [scripts/check-sni-pool.sh](scripts/check-sni-pool.sh). Собирается скриптом [scripts/merge-sni-pools.sh](scripts/merge-sni-pools.sh): **локальный список** + домены из [hxehex/russia-mobile-internet-whitelist](https://github.com/hxehex/russia-mobile-internet-whitelist) (`whitelist.txt`, SNI для мобильного вайтлиста). Первые строки файла — служебные комментарии `#`; дальше по одному хосту в строке.
+- **[data/sni-candidates-local.txt](data/sni-candidates-local.txt)** — правки «свои» только сюда; затем из корня репо: `./scripts/merge-sni-pools.sh` и коммит обновлённого `sni-candidates.txt`.
+
+Переменная **`MOBILE_WHITELIST_URL`** в `merge-sni-pools.sh` задаёт другой raw-URL, если нужен форк или зеркало.
+
+**Нагрузка:** в пуле сотни и тысячи хостов каждый прогон `reality-failover.sh` опрашивает их **последовательно** (до нескольких минут). Имеет смысл прогнать [check-sni-pool.sh](scripts/check-sni-pool.sh), оставить в рабочем файле на сервере только `OK`-хосты или сократить список вручную.
 
 ## Установка на сервере
 

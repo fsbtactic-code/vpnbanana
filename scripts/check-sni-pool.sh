@@ -16,9 +16,10 @@
 #   sudo curl -fSL -o /usr/local/bin/check-sni-pool.sh \
 #     'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/scripts/check-sni-pool.sh'
 #   sudo chmod +x /usr/local/bin/check-sni-pool.sh
-# Список доменов из репо (для проверки или ~/sni-candidates.txt):
+# Список доменов из репо (мердж локального пула + russia-mobile-internet-whitelist):
 #   curl -fSL -o ~/sni-candidates.txt \
 #     'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/data/sni-candidates.txt'
+# Обновить состав в репозитории: ./scripts/merge-sni-pools.sh (апстрим: github.com/hxehex/russia-mobile-internet-whitelist)
 #
 # Только OK-хосты в файл:
 #   check-sni-pool.sh domains.txt | awk '$1=="OK"{print $2}' | sort -u > sni-ok.txt
