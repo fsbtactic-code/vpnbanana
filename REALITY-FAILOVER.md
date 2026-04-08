@@ -84,6 +84,10 @@ sudo chmod 644 /etc/cron.d/reality-failover
 
 Сначала в панели создай inbound **VLESS + REALITY** на порту **443**.
 
+## 3x-ui: `target` вместо `dest`
+
+В новых сборках 3x-ui в `stream_settings` используется **`realitySettings.target`**, а не `dest`. Скрипт `reality-failover.sh` поддерживает оба поля.
+
 ## Если UPDATE падает
 
 Проверь имя колонки (редко отличается по версии 3x-ui):

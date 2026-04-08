@@ -95,12 +95,13 @@ run_once() {
     return 0
   fi
 
-  current_dest=$(echo "$STREAM_JSON" | jq -r '.realitySettings.dest // empty' 2>/dev/null || true)
+  # 3x-ui: новые версии — realitySettings.target; старые — .dest (Xray-стиль)
+  current_dest=$(echo "$STREAM_JSON" | jq -r '.realitySettings.target // .realitySettings.dest // empty' 2>/dev/null || true)
   current_host="${current_dest%%:*}"
 
   if [ -z "$current_host" ] || [ "$current_host" = "null" ]; then
     current_host="${CANDIDATES[0]}"
-    log "no dest in DB, treat current as $current_host"
+    log "no target/dest in DB, treat current as $current_host"
   fi
 
   if is_up "$current_host"; then
@@ -133,7 +134,8 @@ run_once() {
   log "PICK best=$best_host time=${best_ms}s"
 
   NEW_JSON=$(echo "$STREAM_JSON" | jq -c --arg h "$best_host" '
-    .realitySettings.dest = ($h + ":443")
+    .realitySettings.target = ($h + ":443")
+    | .realitySettings.dest = ($h + ":443")
     | .realitySettings.serverNames = [$h]
   ')
 
@@ -142,7 +144,7 @@ run_once() {
   printf '%s' "$NEW_JSON" > "$TMPJSON"
   sqlite3 "$XUI_DB" "UPDATE inbounds SET stream_settings = readfile('$TMPJSON') WHERE id = ${INBOUND_ID};"
   systemctl restart x-ui
-  log "UPDATED id=$INBOUND_ID dest=${best_host}:443 — x-ui restarted (refresh subscription / sni)"
+  log "UPDATED id=$INBOUND_ID target/dest=${best_host}:443 — x-ui restarted (refresh subscription / sni)"
   return 0
 }
 
