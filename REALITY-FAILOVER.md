@@ -40,19 +40,26 @@ Environment=NOTIFY_URL=https://ntfy.sh/ТВОЙ_СЕКРЕТНЫЙ_ТОПИК
 Environment=NOTIFY_TITLE=VPN bananamaster
 ```
 
-После **реальной смены SNI** (`SWITCH`) скрипт сделает `POST` с текстом в теле — придёт push. При желании пуш и на каждый `KEEP` с обновлением заголовков: `Environment=NOTIFY_ON_KEEP=1` (шумнее).
+После **реальной смены SNI** (`SWITCH`) скрипт сделает `POST` с текстом в теле — придёт push. Текст: `SNI Обновлен! Ping: …ms SNI: … | Обновите подписку в своем клиенте`. При желании пуш и на каждый `KEEP` с обновлением заголовков: `Environment=NOTIFY_ON_KEEP=1` (шумнее).
 
-### Вариант B — Telegram
+### Вариант B — Telegram (админ + клиент)
 
-Создай бота у [@BotFather](https://t.me/BotFather), узнай `chat_id` (личка или группа):
+Создай бота у [@BotFather](https://t.me/BotFather), узнай `chat_id` для себя и для клиента (личка / группа; для группы часто отрицательный id):
 
 ```ini
 [Service]
 Environment=TELEGRAM_BOT_TOKEN=123456:ABC...
-Environment=TELEGRAM_CHAT_ID=123456789
+Environment=TELEGRAM_ADMIN_CHAT_ID=111111111
+Environment=TELEGRAM_CLIENT_CHAT_ID=222222222
 ```
 
+Оба получат одно и то же сообщение при **фактическом** обновлении SNI. Устаревший вариант с одним получателем: `TELEGRAM_CHAT_ID` (если админ/клиент не заданы).
+
 Можно **одновременно** с `NOTIFY_URL` — уйдёт и в ntfy, и в Telegram.
+
+### Порог смены SNI по задержке
+
+По умолчанию **`SWITCH_MIN_IMPROVE_MS=50`**: если лидер пула не совпадает с текущим SNI, но выигрыш по времени `curl` меньше **50 мс**, переключение **не выполняется** (меньше шума для клиентов). Порог в миллисекундах: `Environment=SWITCH_MIN_IMPROVE_MS=80`
 
 ### Отключить пуш при смене
 

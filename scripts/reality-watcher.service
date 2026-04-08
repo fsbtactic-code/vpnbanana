@@ -18,7 +18,10 @@ Type=simple
 # Environment=NOTIFY_URL=https://ntfy.sh/secret-topic
 # Environment=NOTIFY_TITLE=VPN
 # Environment=TELEGRAM_BOT_TOKEN=
+# Environment=TELEGRAM_ADMIN_CHAT_ID=
+# Environment=TELEGRAM_CLIENT_CHAT_ID=
 # Environment=TELEGRAM_CHAT_ID=
+# Environment=SWITCH_MIN_IMPROVE_MS=50
 # Environment=NOTIFY_ON_KEEP=0
 Environment=WATCH_INTERVAL_SEC=1800
 ExecStart=/usr/local/bin/reality-failover.sh watch

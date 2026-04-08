@@ -10,8 +10,9 @@
 # Логика каждого прогона:
 #   - Замер «задержки» до каждого хоста из пула CANDIDATES (TLS 1.3 + время curl), по умолчанию параллельно (PROBE_PARALLEL)
 #   - Выбор хоста с минимальным временем среди ответивших
-#   - Если он отличается от текущего target/dest в БД — обновить JSON и restart x-ui
-#   - Если тот же — только лог, без рестарта
+#   - Если лидер ≠ текущий SNI, но выигрыш < SWITCH_MIN_IMPROVE_MS (по умолчанию 50 мс) — SKIP, SNI не меняем
+#   - Если смена нужна — обновить JSON и restart x-ui, Telegram/ntfy при фактическом обновлении
+#   - Если SNI уже лучший — KEEP, без рестарта (опционально bump подписки / пуш)
 #
 # Режимы:
 #   once | (пусто)  — один прогон
@@ -48,7 +49,9 @@
 #   NOTIFY_TITLE — заголовок пуша (ntfy: заголовок уведомления)
 #   NOTIFY_ON_SWITCH=1 — уведомлять при смене SNI (по умолчанию 1)
 #   NOTIFY_ON_KEEP=0 — уведомлять при KEEP+BUMP заголовков (по умолчанию 0, шумно)
-#   TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID — дублировать текст в Telegram (sendMessage)
+#   TELEGRAM_BOT_TOKEN + TELEGRAM_ADMIN_CHAT_ID + TELEGRAM_CLIENT_CHAT_ID — push в Telegram (оба)
+#   (устаревшее: TELEGRAM_CHAT_ID — один получатель, если админ/клиент не заданы)
+#   SWITCH_MIN_IMPROVE_MS=50 — менять SNI только если выигрыш по curl ≥ N мс (иначе SKIP)
 # =============================================================================
 
 set -euo pipefail
@@ -85,6 +88,8 @@ BUMP_SUB_ON_KEEP="${BUMP_SUB_ON_KEEP:-1}"
 RESTART_XUI_ON_KEEP="${RESTART_XUI_ON_KEEP:-0}"
 NOTIFY_ON_SWITCH="${NOTIFY_ON_SWITCH:-1}"
 NOTIFY_ON_KEEP="${NOTIFY_ON_KEEP:-0}"
+# Минимальный выигрыш задержки (мс), чтобы реально переключить SNI на другой хост
+SWITCH_MIN_IMPROVE_MS="${SWITCH_MIN_IMPROVE_MS:-50}"
 
 fill_candidates_from_file() {
   local f="$1"
@@ -141,16 +146,20 @@ probe_ms() {
 host_lc() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
 
 # Подтолкнуть клиентов к перезагрузке подписки: минимальный интервал в заголовке + новый Announce.
-# Push: ntfy (NOTIFY_URL = https://ntfy.sh/secret-topic) или Telegram.
+# Push: ntfy (NOTIFY_URL) или Telegram (админ + клиент).
 push_notify() {
   local event="$1"
   local prev_h="$2"
   local new_h="$3"
-  local msg="VPN REALITY: SNI ${new_h}. Обнови подписку в клиенте (serverName/sni)."
+  local ping_ms="${4:-0}"
+  local msg=""
+
   if [[ "$event" == "SWITCH" ]]; then
-    msg="VPN REALITY: смена SNI ${prev_h} → ${new_h}. Обнови подписку в клиенте."
+    msg="SNI Обновлен! Ping: ${ping_ms}ms SNI: ${new_h} | Обновите подписку в своем клиенте"
   elif [[ "$event" == "KEEP" ]]; then
-    msg="VPN REALITY: SNI без смены (${new_h}), заголовки подписки обновлены — обнови подписку в клиенте."
+    msg="VPN REALITY: SNI без смены (${new_h}), заголовки подписки обновлены — обновите подписку в клиенте."
+  else
+    msg="VPN REALITY: ${new_h}"
   fi
 
   if [[ -n "${NOTIFY_URL:-}" ]]; then
@@ -163,14 +172,33 @@ push_notify() {
     fi
   fi
 
-  if [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]]; then
-    if curl -fsS -m 15 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-      --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-      --data-urlencode "text=${msg}" 2>/dev/null; then
-      log "push notify sent → Telegram ($event)"
+  if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
+    return 0
+  fi
+
+  telegram_send() {
+    local chat_id="$1"
+    curl -fsS -m 15 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+      --data-urlencode "chat_id=${chat_id}" \
+      --data-urlencode "text=${msg}" 2>/dev/null
+  }
+
+  local sent=0
+  local id
+  local -A tg_done=()
+  for id in "${TELEGRAM_ADMIN_CHAT_ID:-}" "${TELEGRAM_CLIENT_CHAT_ID:-}" "${TELEGRAM_CHAT_ID:-}"; do
+    [[ -z "$id" ]] && continue
+    [[ -n "${tg_done[$id]:-}" ]] && continue
+    tg_done[$id]=1
+    if telegram_send "$id"; then
+      log "Telegram sent → chat_id=$id ($event)"
+      sent=$((sent + 1))
     else
-      log "push notify failed (Telegram)"
+      log "Telegram failed → chat_id=$id"
     fi
+  done
+  if [[ "$sent" -eq 0 ]] && [[ -z "${TELEGRAM_ADMIN_CHAT_ID:-}${TELEGRAM_CLIENT_CHAT_ID:-}${TELEGRAM_CHAT_ID:-}" ]]; then
+    :
   fi
 }
 
@@ -207,7 +235,7 @@ run_once() {
   fi
 
   local INBOUND_ID STREAM_JSON current_dest current_host best_host best_ms NEW_JSON TMPJSON
-  local cur_lc best_lc h ms summary
+  local cur_lc best_lc best_ping_ms h ms summary current_probe
 
   INBOUND_ID=$(sqlite3 "$XUI_DB" "SELECT id FROM inbounds WHERE enable = 1 AND port = 443 AND protocol = 'vless' LIMIT 1;" | tr -d '\r\n' || true)
   if [ -z "$INBOUND_ID" ]; then
@@ -291,6 +319,13 @@ run_once() {
     log "pool probe: parallel=${PROBE_PARALLEL} ok=${okc} fail=${fc} fastest=${best_host:-none} ${best_ms:--}s sample:${sample_line:+ $sample_line}"
   fi
 
+  cur_lc=$(host_lc "$current_host")
+  current_probe=""
+  current_probe=$(awk -F '\t' -v h="$cur_lc" '
+    $1 == "_FAIL_" && $2 == h { print "FAIL"; exit }
+    $1 == h { print $2; exit }
+  ' "$probeout" 2>/dev/null || true)
+
   rm -f "$hostfile" "$probeout"
 
   if [ -z "$best_host" ]; then
@@ -298,8 +333,8 @@ run_once() {
     return 0
   fi
 
-  cur_lc=$(host_lc "$current_host")
   best_lc=$(host_lc "$best_host")
+  best_ping_ms="$(awk -v b="$best_ms" 'BEGIN { printf "%.0f", b * 1000.0 }')"
 
   if [ "$cur_lc" = "$best_lc" ]; then
     log "KEEP current=$current_host (fastest in pool, ${best_ms}s)"
@@ -311,10 +346,21 @@ run_once() {
         log "x-ui restarted (RESTART_XUI_ON_KEEP=1)"
       fi
       if [[ "${NOTIFY_ON_KEEP}" == "1" ]]; then
-        push_notify KEEP "$current_host" "$best_host"
+        push_notify KEEP "$current_host" "$best_host" "$best_ping_ms"
       fi
     fi
     return 0
+  fi
+
+  # Не переключаем SNI, если выигрыш по задержке меньше порога (оба хоста ответили в пуле)
+  if [[ -n "$current_probe" && "$current_probe" != "FAIL" ]]; then
+    if ! awk -v cur="$current_probe" -v b="$best_ms" -v min="${SWITCH_MIN_IMPROVE_MS}" 'BEGIN {
+      impr = (cur - b) * 1000.0
+      exit (impr + 0 >= min + 0) ? 0 : 1
+    }'; then
+      log "SKIP SNI switch: выигрыш < ${SWITCH_MIN_IMPROVE_MS}ms (текущий ${current_probe}s vs лучший ${best_ms}s) — оставляем $current_host"
+      return 0
+    fi
   fi
 
   log "SWITCH $current_host -> $best_host (best latency ${best_ms}s in pool)"
@@ -333,7 +379,7 @@ run_once() {
   systemctl restart x-ui
   log "UPDATED id=$INBOUND_ID target/dest=${best_host}:443 — x-ui restarted; subUpdates=${SUB_UPDATES_HOURS}h + subAnnounce bump (Profile-Update-Interval / Announce)"
   if [[ "${NOTIFY_ON_SWITCH}" == "1" ]]; then
-    push_notify SWITCH "$current_host" "$best_host"
+    push_notify SWITCH "$current_host" "$best_host" "$best_ping_ms"
   fi
   return 0
 }
