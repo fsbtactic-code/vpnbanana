@@ -3,7 +3,9 @@
 #
 # Usage:
 #   ./check-sni-pool.sh [domains.txt]
-#   DOMAINS_FILE=~/list.txt ./check-sni-pool.sh
+#   ./check-sni-pool.sh - <domains.txt
+#   cat domains.txt | ./check-sni-pool.sh -
+#   DOMAINS_FILE=~/list.txt ./check-sni-pool.sh   # без аргумента
 #
 # Файл: по одному хосту в строке; пустые строки и # комментарии игнорируются;
 # для строк вида yandex.ru/realty берётся только хост до «/»; дубликаты схлопываются.
@@ -24,16 +26,29 @@ TIMEOUT_CONNECT="${TIMEOUT_CONNECT:-3}"
 TIMEOUT_TOTAL="${TIMEOUT_TOTAL:-6}"
 PARALLEL="${PARALLEL:-}"
 
-f="${1:-${DOMAINS_FILE:-$HOME/sni-candidates.txt}}"
+tmpin=""
+if [[ "${1:-}" == "-" ]]; then
+  tmpin="$(mktemp)"
+  cat >"$tmpin"
+  f="$tmpin"
+elif [[ -n "${1:-}" ]]; then
+  f="$1"
+else
+  f="${DOMAINS_FILE:-$HOME/sni-candidates.txt}"
+fi
+
 if [[ ! -r "$f" ]]; then
-  echo "usage: $0 <domains.txt>" >&2
+  echo "usage: $0 [- | путь/к/domains.txt]" >&2
+  echo "  нет файла $HOME/sni-candidates.txt — создай список доменов, например: nano $HOME/sni-candidates.txt" >&2
+  echo "  или передай файл: $0 /path/to/domains.txt" >&2
+  echo "  или со stdin: $0 - <domains.txt   или   cat domains.txt | $0 -" >&2
   echo "file not readable: $f" >&2
   exit 1
 fi
 
 tmp="$(mktemp)"
 out="$(mktemp)"
-cleanup() { rm -f "$tmp" "$out" 2>/dev/null; }
+cleanup() { rm -f "$tmp" "$out" ${tmpin:+"$tmpin"} 2>/dev/null; }
 trap cleanup EXIT
 
 while IFS= read -r line || [[ -n "$line" ]]; do
