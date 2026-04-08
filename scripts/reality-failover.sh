@@ -79,19 +79,22 @@ run_once() {
     return 1
   fi
 
-  local ROW INBOUND_ID STREAM_JSON current_dest current_host best_host best_ms ms NEW_JSON TMPJSON
+  local INBOUND_ID STREAM_JSON current_dest current_host best_host best_ms NEW_JSON TMPJSON
 
-  ROW=$(sqlite3 "$XUI_DB" "SELECT id, stream_settings FROM inbounds WHERE enable = 1 AND port = 443 AND protocol = 'vless' LIMIT 1;" || true)
-  if [ -z "$ROW" ]; then
+  # Два запроса: stream_settings — многострочный JSON; один SELECT с «id|json» ломается на переносах строк
+  INBOUND_ID=$(sqlite3 "$XUI_DB" "SELECT id FROM inbounds WHERE enable = 1 AND port = 443 AND protocol = 'vless' LIMIT 1;" | tr -d '\r\n' || true)
+  if [ -z "$INBOUND_ID" ]; then
     log "no enabled vless inbound on 443 — create in panel"
     return 0
   fi
+  if ! [[ "$INBOUND_ID" =~ ^[0-9]+$ ]]; then
+    log "invalid inbound id: $INBOUND_ID"
+    return 0
+  fi
 
-  INBOUND_ID=$(echo "$ROW" | cut -d'|' -f1)
-  STREAM_JSON=$(echo "$ROW" | cut -d'|' -f2-)
-
-  if [ -z "$INBOUND_ID" ] || [ -z "$STREAM_JSON" ]; then
-    log "failed to read inbound"
+  STREAM_JSON=$(sqlite3 "$XUI_DB" "SELECT stream_settings FROM inbounds WHERE id = ${INBOUND_ID};" || true)
+  if [ -z "$STREAM_JSON" ]; then
+    log "empty stream_settings for id=$INBOUND_ID"
     return 0
   fi
 
