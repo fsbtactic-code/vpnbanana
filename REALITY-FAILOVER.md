@@ -6,12 +6,12 @@
 
 1. Читает из БД 3x-ui первый **включённый** inbound: `vless`, порт **443**.
 2. Берёт текущий хост из `realitySettings.target` или `dest` (до `:`).
-3. Для **каждого** хоста из пула `CANDIDATES` замеряет время ответа: `curl --tlsv1.3 https://хост/` (как публичный TLS-dest для REALITY). Источник пула: если задан **`CANDIDATES_FILE`** — он; иначе, если есть непустой **`sni-rotation-pool.txt`** (см. [build-sni-rotation-pool.sh](scripts/build-sni-rotation-pool.sh)), берётся он; иначе **`sni-cdn.txt`** (из `data/SNICDN.txt`); иначе **`sni-candidates.txt`**; иначе встроенный короткий список.
+3. Для **каждого** хоста из пула `CANDIDATES` замеряет время ответа: `curl --tlsv1.3 https://хост/` (как публичный TLS-dest для REALITY). Источник пула: если задан **`CANDIDATES_FILE`** — он; иначе, если есть непустой **`SNICDNBEST.txt`** (см. [build-sni-rotation-pool.sh](scripts/build-sni-rotation-pool.sh)), берётся он; иначе **`sni-cdn.txt`** (из `data/SNICDN.txt`); иначе **`sni-candidates.txt`**; иначе встроенный короткий список.
 4. Выбирает хост с **минимальным** временем среди ответивших.
 5. Если он **совпадает** с текущим в БД — только лог `KEEP`, **без** рестарта.
 6. Если **другой** — обновляет `target`, `dest`, `serverNames`, в БД 3x-ui выставляет **`subUpdates`** (часы → заголовок `Profile-Update-Interval`) и **`subAnnounce`** (чтобы клиенты увидели смену подписки), затем перезапускает `x-ui`.
 
-Интервал в режиме `watch`: **`WATCH_INTERVAL_SEC`** (по умолчанию **1800** = 30 минут).
+Интервал в режиме `watch`: **`WATCH_INTERVAL_SEC`** (по умолчанию **3600** = 1 час).
 
 ## Важно про клиенты
 
@@ -92,9 +92,9 @@ Environment=TELEGRAM_CLIENT_CHAT_ID=222222222
 
 1. Резолвит имя (**`getent ahosts`**).
 2. Проверяет **HTTPS + TLS 1.3** с **проверкой сертификата** (как у `curl` без `-k`) — близко к требованиям к публичному dest у VLESS+REALITY.
-3. Пишет **`/usr/local/share/reality-failover/sni-rotation-pool.txt`**: хосты **по возрастанию задержки**, не больше **`TOP_N`** (по умолчанию **120**).
+3. Пишет **`/usr/local/share/reality-failover/SNICDNBEST.txt`**: хосты **по возрастанию задержки**, не больше **`TOP_N`** (по умолчанию **120**).
 
-`reality-failover.sh` **сначала** использует `sni-rotation-pool.txt`, если в нём есть строки-хосты; иначе — `sni-cdn.txt`; иначе — `sni-candidates.txt`.
+`reality-failover.sh` **сначала** использует `SNICDNBEST.txt`, если в нём есть строки-хосты; иначе — `sni-cdn.txt`; иначе — `sni-candidates.txt`.
 
 Установка и однократная сборка (после того как уже лежит `sni-cdn.txt`):
 
@@ -110,8 +110,8 @@ sudo env TOP_N=120 PARALLEL=30 /usr/local/bin/build-sni-rotation-pool.sh
 Проверка результата:
 
 ```bash
-grep -v '^#' /usr/local/share/reality-failover/sni-rotation-pool.txt | head -20
-wc -l /usr/local/share/reality-failover/sni-rotation-pool.txt
+grep -v '^#' /usr/local/share/reality-failover/SNICDNBEST.txt | head -20
+wc -l /usr/local/share/reality-failover/SNICDNBEST.txt
 sudo /usr/local/bin/reality-failover.sh once
 ```
 

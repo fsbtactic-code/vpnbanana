@@ -1,12 +1,12 @@
 [Unit]
-Description=REALITY SNI watcher (pick fastest SNI from pool every 30 min)
+Description=REALITY SNI watcher (pick fastest SNI from pool every hour)
 After=network-online.target x-ui.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-# Полный замер пула раз в 30 мин (секунды); изменить: Environment=WATCH_INTERVAL_SEC=3600
-# Пул: приоритет sni-rotation-pool.txt (см. build-sni-rotation-pool.sh), иначе sni-cdn.txt, затем sni-candidates.txt
+# Полный замер пула раз в 60 мин (секунды); изменить: Environment=WATCH_INTERVAL_SEC=3600
+# Пул: приоритет SNICDNBEST.txt (см. build-sni-rotation-pool.sh), иначе sni-cdn.txt, затем sni-candidates.txt
 # Environment=CDN_POOL=/usr/local/share/reality-failover/sni-cdn.txt
 # Свой файл: Environment=CANDIDATES_FILE=/path/to/pool.txt
 # После смены SNI: Profile-Update-Interval (часы) и Announce в БД 3x-ui
@@ -30,7 +30,7 @@ Type=simple
 # Environment=TELEGRAM_CHAT_ID=
 # Environment=SWITCH_MIN_IMPROVE_MS=50
 # Environment=NOTIFY_ON_KEEP=0
-Environment=WATCH_INTERVAL_SEC=1800
+Environment=WATCH_INTERVAL_SEC=3600
 ExecStart=/usr/local/bin/reality-failover.sh watch
 Restart=always
 RestartSec=10

@@ -1,7 +1,7 @@
 #!/bin/bash
 # С сервера: проверяет домены на пригодность как публичный TLS-dest для VLESS+REALITY
 # (резолв DNS + HTTPS с TLS 1.3 и проверкой сертификата под имя хоста — как у curl без -k).
-# Сохраняет отсортированный по задержке список для reality-failover (ротация раз в 30 мин).
+# Сохраняет отсортированный по задержке список для reality-failover.
 #
 # Рекомендуемая база: data/SNICDN.txt (CDN-focused).
 # Широкий fallback: data/sni-candidates.txt (или merge-sni-pools.sh).
@@ -12,7 +12,7 @@
 #
 # Env:
 #   SOURCE          — входной список хостов (по умолчанию /usr/local/share/reality-failover/sni-cdn.txt)
-#   OUT             — куда писать пул для ротации (по умолчанию /usr/local/share/reality-failover/sni-rotation-pool.txt)
+#   OUT             — куда писать пул лучших CDN (по умолчанию /usr/local/share/reality-failover/SNICDNBEST.txt)
 #   TOP_N           — максимум хостов в пуле (по умолчанию 120; 0 = без лимита)
 #   PARALLEL        — параллельные curl (по умолчанию 30)
 #   TIMEOUT_CONNECT, TIMEOUT_TOTAL — как в reality-failover
@@ -29,7 +29,7 @@ set -euo pipefail
 TIMEOUT_CONNECT="${TIMEOUT_CONNECT:-3}"
 TIMEOUT_TOTAL="${TIMEOUT_TOTAL:-6}"
 SOURCE="${SOURCE:-/usr/local/share/reality-failover/sni-cdn.txt}"
-OUT="${OUT:-/usr/local/share/reality-failover/sni-rotation-pool.txt}"
+OUT="${OUT:-/usr/local/share/reality-failover/SNICDNBEST.txt}"
 TOP_N="${TOP_N:-120}"
 PARALLEL="${PARALLEL:-30}"
 STRICT_OPENSSL="${STRICT_OPENSSL:-0}"

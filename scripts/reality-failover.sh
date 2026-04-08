@@ -5,7 +5,7 @@
 #
 # Пул SNI: если задан CANDIDATES_FILE — берём его.
 # Иначе приоритет такой:
-#   1) /usr/local/share/reality-failover/sni-rotation-pool.txt (лучшие после проверки)
+#   1) /usr/local/share/reality-failover/SNICDNBEST.txt (лучшие CDN после проверки именно на этом сервере)
 #   2) /usr/local/share/reality-failover/sni-cdn.txt (CDN-база из data/SNICDN.txt)
 #   3) /usr/local/share/reality-failover/sni-candidates.txt (широкий fallback)
 # Если ничего нет — встроенный короткий список.
@@ -21,7 +21,7 @@
 #
 # Режимы:
 #   once | (пусто)  — один прогон
-#   watch           — цикл раз в WATCH_INTERVAL_SEC (по умолчанию 1800 = 30 мин)
+#   watch           — цикл раз в WATCH_INTERVAL_SEC (по умолчанию 3600 = 1 час)
 #
 # Клиенты: после смены SNI обнови subscription / sni= в vless.
 #
@@ -43,7 +43,7 @@
 #   sudo systemctl daemon-reload && sudo systemctl restart reality-watcher
 #
 # Env: XUI_DB, CANDIDATES_FILE, ROTATION_POOL, CDN_POOL, WIDE_POOL, TIMEOUT_CONNECT, TIMEOUT_TOTAL,
-#      WATCH_INTERVAL_SEC (default 1800),
+#      WATCH_INTERVAL_SEC (default 3600),
 #      SUB_UPDATES_HOURS (после смены SNI: интервал в заголовке Profile-Update-Interval, часы),
 #      BUMP_SUB_ANNOUNCE (1/0 — обновить Announce в БД 3x-ui, чтобы клиенты заметили смену подписки)
 #      PROBE_PARALLEL (одновременных curl; по умолчанию 12; 1 = строго по одному)
@@ -77,7 +77,7 @@ LOG_TAG="[reality-failover]"
 TIMEOUT_CONNECT="${TIMEOUT_CONNECT:-3}"
 TIMEOUT_TOTAL="${TIMEOUT_TOTAL:-6}"
 # 30 минут между полными замерами пула
-WATCH_INTERVAL_SEC="${WATCH_INTERVAL_SEC:-1800}"
+WATCH_INTERVAL_SEC="${WATCH_INTERVAL_SEC:-3600}"
 # Параллельные HTTPS-пробы к хостам пула (xargs — меньше параллелизма = меньше таймаутов/искажений)
 PROBE_PARALLEL="${PROBE_PARALLEL:-12}"
 # Вторая волна: полоса от лидера 1-й волны + добор до top-N → медиана по каждому → минимум медиан = «самый быстрый»
@@ -92,7 +92,7 @@ REALITY_SSL_VERIFY="${REALITY_SSL_VERIFY:-1}"
 [[ "$VERIFY_SAMPLES" =~ ^[0-9]+$ ]] || VERIFY_SAMPLES=3
 (( VERIFY_SAMPLES < 1 )) && VERIFY_SAMPLES=1
 
-ROTATION_POOL="${ROTATION_POOL:-/usr/local/share/reality-failover/sni-rotation-pool.txt}"
+ROTATION_POOL="${ROTATION_POOL:-/usr/local/share/reality-failover/SNICDNBEST.txt}"
 CDN_POOL="${CDN_POOL:-/usr/local/share/reality-failover/sni-cdn.txt}"
 WIDE_POOL="${WIDE_POOL:-/usr/local/share/reality-failover/sni-candidates.txt}"
 
@@ -563,7 +563,7 @@ case "$MODE" in
   *)
     echo "Usage: $0 [once|watch]" >&2
     echo "  once  — single run: pick fastest SNI in pool, update if changed" >&2
-    echo "  watch — repeat every WATCH_INTERVAL_SEC (default 1800)" >&2
+    echo "  watch — repeat every WATCH_INTERVAL_SEC (default 3600)" >&2
     exit 1
     ;;
 esac
