@@ -6,7 +6,7 @@
 
 1. Читает из БД 3x-ui первый **включённый** inbound: `vless`, порт **443**.
 2. Берёт текущий хост из `realitySettings.target` или `dest` (до `:`).
-3. Для **каждого** хоста из массива `CANDIDATES` замеряет время ответа: `curl --tlsv1.3 https://хост/` (это практичный аналог «пинга» до HTTPS с твоего VPS).
+3. Для **каждого** хоста из пула `CANDIDATES` замеряет время ответа: `curl --tlsv1.3 https://хост/` (это практичный аналог «пинга» до HTTPS с твоего VPS). Пул по умолчанию читается из файла **`CANDIDATES_FILE`** (см. ниже); если файла нет — используется короткий встроенный список.
 4. Выбирает хост с **минимальным** временем среди ответивших.
 5. Если он **совпадает** с текущим в БД — только лог `KEEP`, **без** рестарта.
 6. Если **другой** — обновляет `target`, `dest`, `serverNames` и перезапускает `x-ui`.
@@ -19,19 +19,30 @@
 
 Нужно либо **subscription** из панели с автообновлением, либо после смены заново экспортировать узел и обновить конфиг вручную.
 
+## Пул доменов в репозитории
+
+Файл со списком SNI-кандидатов: [data/sni-candidates.txt](data/sni-candidates.txt) (комментарии `#` и пустые строки допускаются). Его же удобно подставлять в [scripts/check-sni-pool.sh](scripts/check-sni-pool.sh) для проверки доступности с VPS.
+
 ## Установка на сервере
 
 ```bash
 sudo apt install -y jq curl sqlite3 util-linux
 
-sudo nano /usr/local/bin/reality-failover.sh
-# вставь содержимое scripts/reality-failover.sh с GitHub или скопируй файл
-
+sudo curl -fSL -o /usr/local/bin/reality-failover.sh \
+  'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/scripts/reality-failover.sh'
 sudo chmod +x /usr/local/bin/reality-failover.sh
+
+sudo mkdir -p /usr/local/share/reality-failover
+sudo curl -fSL -o /usr/local/share/reality-failover/sni-candidates.txt \
+  'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/data/sni-candidates.txt'
 
 # Проверка вручную
 sudo /usr/local/bin/reality-failover.sh once
 ```
+
+Свой список: положи файл на сервер и задай переменную **`CANDIDATES_FILE`** (например в `systemctl edit reality-watcher`):
+
+`Environment=CANDIDATES_FILE=/etc/reality-failover/my-pool.txt`
 
 ## Постоянный «слушатель» (systemd) — рекомендуется
 

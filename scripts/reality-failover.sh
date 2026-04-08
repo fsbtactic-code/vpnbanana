@@ -1,7 +1,11 @@
 #!/bin/bash
-# reality-failover build: pool-latency + split-sql (2026-04-08)
+# reality-failover build: pool-latency + split-sql + pool-file (2026-04-08)
 # =============================================================================
 # REALITY SNI picker for 3x-ui (SQLite)
+#
+# Пул SNI: если читается CANDIDATES_FILE (по умолчанию
+# /usr/local/share/reality-failover/sni-candidates.txt), хосты берутся оттуда
+# (как в data/sni-candidates.txt в репо). Иначе — встроенный короткий список.
 #
 # Логика каждого прогона:
 #   - Замер «задержки» до каждого хоста из пула CANDIDATES (TLS 1.3 + время curl)
@@ -17,7 +21,12 @@
 #
 # Install:
 #   sudo apt install -y jq curl sqlite3 util-linux
-#   sudo install -m 755 reality-failover.sh /usr/local/bin/reality-failover.sh
+#   sudo curl -fSL -o /usr/local/bin/reality-failover.sh \
+#     'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/scripts/reality-failover.sh'
+#   sudo chmod +x /usr/local/bin/reality-failover.sh
+#   sudo mkdir -p /usr/local/share/reality-failover
+#   sudo curl -fSL -o /usr/local/share/reality-failover/sni-candidates.txt \
+#     'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/data/sni-candidates.txt'
 #
 # Cron каждые 30 минут:
 #   */30 * * * * root /usr/local/bin/reality-failover.sh once >> /var/log/reality-failover.log 2>&1
@@ -25,7 +34,7 @@
 # Systemd:
 #   sudo systemctl daemon-reload && sudo systemctl restart reality-watcher
 #
-# Env: XUI_DB, TIMEOUT_CONNECT, TIMEOUT_TOTAL, WATCH_INTERVAL_SEC (default 1800)
+# Env: XUI_DB, CANDIDATES_FILE, TIMEOUT_CONNECT, TIMEOUT_TOTAL, WATCH_INTERVAL_SEC (default 1800)
 # =============================================================================
 
 set -euo pipefail
@@ -38,18 +47,47 @@ TIMEOUT_TOTAL="${TIMEOUT_TOTAL:-6}"
 # 30 минут между полными замерами пула
 WATCH_INTERVAL_SEC="${WATCH_INTERVAL_SEC:-1800}"
 
-CANDIDATES=(
-  nalog.ru
-  sovcombank.ru
-  tinkoff.ru
-  sberbank.ru
-  mos.ru
-  rt.ru
-  yandex.ru
-  vk.com
-  aeroflot.ru
-  mts.ru
-)
+CANDIDATES_FILE="${CANDIDATES_FILE:-/usr/local/share/reality-failover/sni-candidates.txt}"
+
+fill_candidates_from_file() {
+  local f="$1"
+  CANDIDATES=()
+  local -A seen=()
+  local line h
+  local -a lines=()
+  mapfile -t lines < "$f" || true
+  for line in "${lines[@]}"; do
+    line="${line%%#*}"
+    line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    h="${line%%/*}"
+    h="$(echo "$h" | tr '[:upper:]' '[:lower:]')"
+    h="${h//$'\r'/}"
+    [[ -z "$h" ]] && continue
+    [[ -n "${seen[$h]:-}" ]] && continue
+    seen[$h]=1
+    CANDIDATES+=("$h")
+  done
+}
+
+CANDIDATES=()
+if [[ -r "$CANDIDATES_FILE" ]]; then
+  fill_candidates_from_file "$CANDIDATES_FILE"
+fi
+if [[ ${#CANDIDATES[@]} -eq 0 ]]; then
+  CANDIDATES=(
+    nalog.ru
+    sovcombank.ru
+    tinkoff.ru
+    sberbank.ru
+    mos.ru
+    rt.ru
+    yandex.ru
+    vk.com
+    aeroflot.ru
+    mts.ru
+  )
+fi
 
 log() { echo "$(date -Iseconds) $LOG_TAG $*"; }
 

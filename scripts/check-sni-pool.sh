@@ -16,6 +16,9 @@
 #   sudo curl -fSL -o /usr/local/bin/check-sni-pool.sh \
 #     'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/scripts/check-sni-pool.sh'
 #   sudo chmod +x /usr/local/bin/check-sni-pool.sh
+# Список доменов из репо (для проверки или ~/sni-candidates.txt):
+#   curl -fSL -o ~/sni-candidates.txt \
+#     'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/data/sni-candidates.txt'
 #
 # Только OK-хосты в файл:
 #   check-sni-pool.sh domains.txt | awk '$1=="OK"{print $2}' | sort -u > sni-ok.txt
@@ -39,7 +42,9 @@ fi
 
 if [[ ! -r "$f" ]]; then
   echo "usage: $0 [- | путь/к/domains.txt]" >&2
-  echo "  нет файла $HOME/sni-candidates.txt — создай список доменов, например: nano $HOME/sni-candidates.txt" >&2
+  echo "  нет файла: скачай с GitHub: curl -fSL -o ~/sni-candidates.txt \\" >&2
+  echo "    'https://raw.githubusercontent.com/fsbtactic-code/vpnbanana/main/data/sni-candidates.txt'" >&2
+  echo "  или: nano $HOME/sni-candidates.txt" >&2
   echo "  или передай файл: $0 /path/to/domains.txt" >&2
   echo "  или со stdin: $0 - <domains.txt   или   cat domains.txt | $0 -" >&2
   echo "file not readable: $f" >&2

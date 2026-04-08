@@ -6,6 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Полный замер пула раз в 30 мин (секунды); изменить: Environment=WATCH_INTERVAL_SEC=3600
+# Пул SNI по умолчанию: /usr/local/share/reality-failover/sni-candidates.txt
+# Свой файл: systemctl edit → Environment=CANDIDATES_FILE=/path/to/pool.txt
 Environment=WATCH_INTERVAL_SEC=1800
 ExecStart=/usr/local/bin/reality-failover.sh watch
 Restart=always
