@@ -1,4 +1,5 @@
 #!/bin/bash
+# reality-failover build: pool-latency + split-sql (2026-04-08)
 # =============================================================================
 # REALITY SNI picker for 3x-ui (SQLite)
 #
