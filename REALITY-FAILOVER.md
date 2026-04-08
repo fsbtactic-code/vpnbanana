@@ -24,6 +24,42 @@
 
 Нужна **subscription** из панели с автообновлением или ручное обновление конфига.
 
+## Push на телефон («обнови подписку»)
+
+Ссылка подписки по HTTP **сама не шлёт push** — клиент только периодически её опрашивает. Чтобы при **смене SNI** прилетало уведомление, на сервере в `reality-failover` можно включить:
+
+### Вариант A — [ntfy.sh](https://ntfy.sh) (проще всего)
+
+1. На телефоне: приложение **ntfy** (F-Droid / Google Play).
+2. Задай секретный топик (длинная случайная строка), не светись публично.
+3. В `systemctl edit reality-watcher`:
+
+```ini
+[Service]
+Environment=NOTIFY_URL=https://ntfy.sh/ТВОЙ_СЕКРЕТНЫЙ_ТОПИК
+Environment=NOTIFY_TITLE=VPN bananamaster
+```
+
+После **реальной смены SNI** (`SWITCH`) скрипт сделает `POST` с текстом в теле — придёт push. При желании пуш и на каждый `KEEP` с обновлением заголовков: `Environment=NOTIFY_ON_KEEP=1` (шумнее).
+
+### Вариант B — Telegram
+
+Создай бота у [@BotFather](https://t.me/BotFather), узнай `chat_id` (личка или группа):
+
+```ini
+[Service]
+Environment=TELEGRAM_BOT_TOKEN=123456:ABC...
+Environment=TELEGRAM_CHAT_ID=123456789
+```
+
+Можно **одновременно** с `NOTIFY_URL` — уйдёт и в ntfy, и в Telegram.
+
+### Отключить пуш при смене
+
+`Environment=NOTIFY_ON_SWITCH=0`
+
+Обнови скрипт с GitHub и перезапусти watcher после правки unit.
+
 ## Пул доменов в репозитории
 
 - **[data/sni-candidates.txt](data/sni-candidates.txt)** — итоговый пул для сервера и для [scripts/check-sni-pool.sh](scripts/check-sni-pool.sh). Собирается скриптом [scripts/merge-sni-pools.sh](scripts/merge-sni-pools.sh): **локальный список** + домены из [hxehex/russia-mobile-internet-whitelist](https://github.com/hxehex/russia-mobile-internet-whitelist) (`whitelist.txt`, SNI для мобильного вайтлиста). Первые строки файла — служебные комментарии `#`; дальше по одному хосту в строке.

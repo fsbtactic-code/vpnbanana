@@ -42,6 +42,13 @@
 #      POOL_PROBE_FULL=1 — в лог весь pool probe (host=time); иначе краткая сводка + sample
 #      BUMP_SUB_ON_KEEP=1 — при KEEP всё равно обновить subUpdates/subAnnounce (клиенты чаще тянут подписку)
 #      RESTART_XUI_ON_KEEP=1 — после KEEP перезапустить x-ui (тяжелее; обычно не нужно)
+#
+# Push на телефон (подписка по HTTP сама push не шлёт — только опрос):
+#   NOTIFY_URL — POST text/plain в тело (удобно для https://ntfy.sh/ТВОЙ_топик)
+#   NOTIFY_TITLE — заголовок пуша (ntfy: заголовок уведомления)
+#   NOTIFY_ON_SWITCH=1 — уведомлять при смене SNI (по умолчанию 1)
+#   NOTIFY_ON_KEEP=0 — уведомлять при KEEP+BUMP заголовков (по умолчанию 0, шумно)
+#   TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID — дублировать текст в Telegram (sendMessage)
 # =============================================================================
 
 set -euo pipefail
@@ -76,6 +83,8 @@ SUB_UPDATES_HOURS="${SUB_UPDATES_HOURS:-1}"
 BUMP_SUB_ANNOUNCE="${BUMP_SUB_ANNOUNCE:-1}"
 BUMP_SUB_ON_KEEP="${BUMP_SUB_ON_KEEP:-1}"
 RESTART_XUI_ON_KEEP="${RESTART_XUI_ON_KEEP:-0}"
+NOTIFY_ON_SWITCH="${NOTIFY_ON_SWITCH:-1}"
+NOTIFY_ON_KEEP="${NOTIFY_ON_KEEP:-0}"
 
 fill_candidates_from_file() {
   local f="$1"
@@ -132,6 +141,39 @@ probe_ms() {
 host_lc() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
 
 # Подтолкнуть клиентов к перезагрузке подписки: минимальный интервал в заголовке + новый Announce.
+# Push: ntfy (NOTIFY_URL = https://ntfy.sh/secret-topic) или Telegram.
+push_notify() {
+  local event="$1"
+  local prev_h="$2"
+  local new_h="$3"
+  local msg="VPN REALITY: SNI ${new_h}. Обнови подписку в клиенте (serverName/sni)."
+  if [[ "$event" == "SWITCH" ]]; then
+    msg="VPN REALITY: смена SNI ${prev_h} → ${new_h}. Обнови подписку в клиенте."
+  elif [[ "$event" == "KEEP" ]]; then
+    msg="VPN REALITY: SNI без смены (${new_h}), заголовки подписки обновлены — обнови подписку в клиенте."
+  fi
+
+  if [[ -n "${NOTIFY_URL:-}" ]]; then
+    local curlargs=(-fsS -m 15 -X POST -H "Content-Type: text/plain; charset=UTF-8" --data-binary "$msg")
+    [[ -n "${NOTIFY_TITLE:-}" ]] && curlargs+=(-H "Title: ${NOTIFY_TITLE}")
+    if curl "${curlargs[@]}" "$NOTIFY_URL" 2>/dev/null; then
+      log "push notify sent → NOTIFY_URL ($event)"
+    else
+      log "push notify failed (NOTIFY_URL)"
+    fi
+  fi
+
+  if [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]]; then
+    if curl -fsS -m 15 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+      --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+      --data-urlencode "text=${msg}" 2>/dev/null; then
+      log "push notify sent → Telegram ($event)"
+    else
+      log "push notify failed (Telegram)"
+    fi
+  fi
+}
+
 bump_subscription_headers() {
   local hours="$1"
   local stamp esc
@@ -268,6 +310,9 @@ run_once() {
         systemctl restart x-ui
         log "x-ui restarted (RESTART_XUI_ON_KEEP=1)"
       fi
+      if [[ "${NOTIFY_ON_KEEP}" == "1" ]]; then
+        push_notify KEEP "$current_host" "$best_host"
+      fi
     fi
     return 0
   fi
@@ -287,6 +332,9 @@ run_once() {
   bump_subscription_headers "$SUB_UPDATES_HOURS"
   systemctl restart x-ui
   log "UPDATED id=$INBOUND_ID target/dest=${best_host}:443 — x-ui restarted; subUpdates=${SUB_UPDATES_HOURS}h + subAnnounce bump (Profile-Update-Interval / Announce)"
+  if [[ "${NOTIFY_ON_SWITCH}" == "1" ]]; then
+    push_notify SWITCH "$current_host" "$best_host"
+  fi
   return 0
 }
 

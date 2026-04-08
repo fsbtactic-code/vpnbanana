@@ -14,6 +14,12 @@ Type=simple
 # Environment=BUMP_SUB_ON_KEEP=1
 # Environment=RESTART_XUI_ON_KEEP=0
 # Environment=PROBE_PARALLEL=40
+# Push (ntfy или Telegram — см. REALITY-FAILOVER.md)
+# Environment=NOTIFY_URL=https://ntfy.sh/secret-topic
+# Environment=NOTIFY_TITLE=VPN
+# Environment=TELEGRAM_BOT_TOKEN=
+# Environment=TELEGRAM_CHAT_ID=
+# Environment=NOTIFY_ON_KEEP=0
 Environment=WATCH_INTERVAL_SEC=1800
 ExecStart=/usr/local/bin/reality-failover.sh watch
 Restart=always
