@@ -1,0 +1,41 @@
+# --- секреты и рантайм: НИКОГДА не коммитить ---
+.env
+*.env
+!.env.example
+.env.local
+
+# серверные секреты / личные снимки
+PLAN.md
+SPEC.md
+server-setup/
+secrets/
+tokens/
+*.pem
+*.key
+*.crt
+*.crypt5
+*.deeplink
+backend/routing.deeplink
+bot/backend/routing.deeplink
+rules/happ-routing.json
+rules/happ-routing.deeplink
+
+# база данных бота
+db.sqlite
+*.sqlite
+*.sqlite3
+resp_*.json
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# логи / временное
+*.log
+*.tmp
+diag/
+
+# pytest
+.pytest_cache/

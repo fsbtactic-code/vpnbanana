@@ -1,0 +1,8 @@
+[Unit]
+Description=vpnbanana accounting tick
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/vpnbanana/bot
+EnvironmentFile=/root/vpnbanana/.env
+ExecStart=/root/vpnbanana/bot/.venv/bin/python -m app.accounting_run

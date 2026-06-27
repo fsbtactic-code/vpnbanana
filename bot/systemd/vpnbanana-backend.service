@@ -1,0 +1,13 @@
+[Unit]
+Description=vpnbanana subscription backend (FastAPI)
+After=network.target
+
+[Service]
+WorkingDirectory=/root/vpnbanana/bot
+EnvironmentFile=/root/vpnbanana/.env
+ExecStart=/root/vpnbanana/bot/.venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8090 --workers 2
+Restart=always
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target
